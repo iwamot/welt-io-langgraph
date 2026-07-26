@@ -15,11 +15,12 @@ JSON wire contract, which welt-io-langgraph adapts in both directions.
 import os
 from base64 import b64encode
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
 from langchain.tools import tool
 from langchain_aws import ChatBedrockConverse
 from langchain_core.runnables import RunnableConfig
@@ -55,7 +56,7 @@ def current_time() -> str:
     Returns:
         str: The current UTC time in ISO 8601 format.
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _document_name(stem: str) -> str:
@@ -105,9 +106,11 @@ def sample_dangerous_action(action: str) -> str:
     """
     Pretend to run a dangerous or irreversible action the user asked for.
 
-    A sample of the approval round trip: the interrupt below pauses the
-    run until someone answers in the Slack thread — with the buttons, or
-    by typing an answer into the text field. Nothing is actually
+    A sample of approval from outside the tool: the middleware below names
+    this tool in `interrupt_on`, so the run pauses for an answer in the
+    Slack thread before this body starts. Nothing here knows about the
+    approval — which is what lets a tool the agent did not write, from a
+    library or an MCP server, be gated the same way. Nothing is actually
     executed.
 
     Args:
@@ -116,21 +119,7 @@ def sample_dangerous_action(action: str) -> str:
     Returns:
         str: The outcome of the action.
     """
-    answer = interrupt(
-        interrupt_reason(
-            f"May I run this dangerous action? — {action}",
-            [
-                {"value": "y", "label": "Approve", "style": "primary"},
-                {"value": "n", "label": "Cancel"},
-            ],
-            input={"label": "Or type your answer"},
-        )
-    )
-    if answer == "y":
-        return f"Ran: {action}. (This example doesn't actually run anything.)"
-    if answer == "n":
-        return "The action was cancelled by the user."
-    return f"The action was not run. The user answered: {answer}"
+    return f"Ran: {action}. (This example doesn't actually run anything.)"
 
 
 @task
@@ -151,7 +140,7 @@ def _drafted_report(topic: str) -> str:
     Returns:
         str: The draft report body.
     """
-    drafted_at = datetime.now(timezone.utc).isoformat()
+    drafted_at = datetime.now(UTC).isoformat()
     return (
         f"# {topic}\n\nEverything about {topic} is going well.\n\n"
         f"_Drafted at {drafted_at}._\n"
@@ -225,6 +214,21 @@ agent = create_agent(
         create_sample_file,
         sample_dangerous_action,
         sample_draft_report,
+    ],
+    # Approval by declaration: a tool named here pauses before it runs,
+    # and the decisions it allows become the widgets Welt renders —
+    # `approve` and `reject` as buttons, `respond` as a free-text field
+    # whose text is returned to the model in place of the tool's own
+    # result. `edit` is left out: rewriting an action's arguments asks for
+    # a form the wire has no shape for.
+    middleware=[
+        HumanInTheLoopMiddleware(
+            interrupt_on={
+                "sample_dangerous_action": InterruptOnConfig(
+                    allowed_decisions=["approve", "reject", "respond"]
+                )
+            }
+        )
     ],
     # Interrupts pause and resume through checkpoints, so a checkpointer
     # is required even though the conversation history lives in Slack.

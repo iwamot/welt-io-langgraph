@@ -9,7 +9,8 @@ not fit it in either direction:
   `decode_messages` rebuilds each message accordingly. Welt resumes an
   interrupted run with a plain mapping of interrupt id to the chosen
   answer; `decode_interrupt_responses` turns it into the mapping
-  `Command(resume=...)` takes.
+  `Command(resume=...)` takes, the decisions a
+  `HumanInTheLoopMiddleware` request resumes from included.
 - Outbound, raw `astream` items carry values that are not
   JSON-serializable (message objects, Interrupt objects), which the
   AgentCore Runtime SDK would degrade to a plain string on the SSE wire.
@@ -19,7 +20,8 @@ not fit it in either direction:
   name and raw bytes, for the files the host app attaches itself.
   `interrupt_reason` builds the reason shape Welt renders as a message
   with buttons, a free-text field, or both when a tool interrupts for
-  human input.
+  human input, and the requests a `HumanInTheLoopMiddleware` raises
+  become that shape too — one question per reviewed action.
 """
 
 import base64
@@ -245,6 +247,18 @@ def _source_bytes(media: object) -> str | None:
     return data
 
 
+# The separator that splits one `HumanInTheLoopMiddleware` request into a
+# question per reviewed action, and the button values of the questions it
+# splits into. The values are namespaced rather than the bare decision
+# names because Welt hands back one string per question without saying
+# which widget produced it: only a value the adapter minted identifies a
+# press, which leaves every other string — including a typed "approve" —
+# to travel on as text the agent interprets.
+_HITL_ID_SEPARATOR = "#"
+_HITL_APPROVE = "welt-io:hitl:approve"
+_HITL_REJECT = "welt-io:hitl:reject"
+
+
 def decode_interrupt_responses(responses: dict) -> dict:
     """
     Decode Welt's interrupt answers into LangGraph's resume input.
@@ -256,6 +270,16 @@ def decode_interrupt_responses(responses: dict) -> dict:
     answer is not a string are skipped, since they come from the wire
     rather than the developer.
 
+    The answers to a `HumanInTheLoopMiddleware` request arrive under the
+    per-action ids `renderable_events` split it into, and are rejoined
+    into the single `{"decisions": [...]}` the middleware resumes from, in
+    action order. A pressed button is recognized by the value the adapter
+    minted for it; every other answer travels on as the `respond`
+    decision's message with its text untouched, since what a typed answer
+    means is for the agent to decide. A request whose per-action ids do
+    not form a gapless run from its first action is dropped whole, a short
+    `decisions` list being what the middleware raises on.
+
     Args:
         responses (dict): The `interrupt_responses` value of Welt's
             payload.
@@ -263,11 +287,93 @@ def decode_interrupt_responses(responses: dict) -> dict:
     Returns:
         dict: The interrupt id to answer mapping for `Command(resume=...)`.
     """
-    return {
-        interrupt_id: answer
-        for interrupt_id, answer in responses.items()
-        if isinstance(answer, str)
-    }
+    decoded: dict = {}
+    answers_by_request: dict[str, dict[int, str]] = {}
+    for interrupt_id, answer in responses.items():
+        if not isinstance(answer, str):
+            continue
+        split = _split_hitl_id(interrupt_id)
+        if split is None:
+            decoded[interrupt_id] = answer
+            continue
+        request_id, index = split
+        if request_id not in answers_by_request:
+            answers_by_request[request_id] = {}
+            # Claims the slot, so a rejoined request keeps the place its
+            # first answer held in the payload's order.
+            decoded[request_id] = {}
+        answers_by_request[request_id][index] = answer
+    for request_id, answers in answers_by_request.items():
+        decisions = _hitl_decisions(answers)
+        if decisions is None:
+            del decoded[request_id]
+        else:
+            decoded[request_id] = {"decisions": decisions}
+    return decoded
+
+
+def _split_hitl_id(interrupt_id: str) -> tuple[str, int] | None:
+    """
+    Split a per-action interrupt id into its request id and action index.
+
+    The ids `renderable_events` mints for the actions of one
+    `HumanInTheLoopMiddleware` request carry the action's index after the
+    LangGraph interrupt id (`<id>#0`). LangGraph's own ids are hex
+    digests, so an id carrying the separator and a decimal tail is one of
+    the adapter's own rather than a plain interrupt's.
+
+    Args:
+        interrupt_id (str): An interrupt id from Welt's resume payload.
+
+    Returns:
+        tuple[str, int] | None: The request id and the action index, or
+            None when the id belongs to a plain interrupt.
+    """
+    request_id, separator, index = interrupt_id.rpartition(_HITL_ID_SEPARATOR)
+    if not separator or not request_id:
+        return None
+    if not index.isascii() or not index.isdecimal():
+        return None
+    return request_id, int(index)
+
+
+def _hitl_decisions(answers: dict[int, str]) -> list[dict] | None:
+    """
+    Rejoin one request's per-action answers into its decisions.
+
+    The middleware matches decisions to reviewed actions by position and
+    raises unless it gets one per action, so the answers have to cover the
+    indices from the first action on without a gap.
+
+    Args:
+        answers (dict[int, str]): One request's answers, by action index.
+
+    Returns:
+        list[dict] | None: The decisions in action order, or None when the
+            answers leave a gap.
+    """
+    if sorted(answers) != list(range(len(answers))):
+        return None
+    return [_hitl_decision(answers[index]) for index in range(len(answers))]
+
+
+def _hitl_decision(answer: str) -> dict:
+    """
+    Map one answer to the decision it stands for.
+
+    Args:
+        answer (str): One action's answer, as Welt sent it.
+
+    Returns:
+        dict: The `approve` or `reject` decision the pressed button
+            stands for, or the `respond` decision carrying the answer as
+            its message.
+    """
+    if answer == _HITL_APPROVE:
+        return {"type": "approve"}
+    if answer == _HITL_REJECT:
+        return {"type": "reject"}
+    return {"type": "respond", "message": answer}
 
 
 def file_event(name: str, data: bytes) -> dict:
@@ -711,11 +817,17 @@ def _interrupt_events(payload: object) -> list[dict]:
     goes to Welt's log only, so it stays empty. The usual node updates
     yield nothing.
 
+    A `HumanInTheLoopMiddleware` request is the one value read rather than
+    passed through, since Welt cannot render it and the middleware cannot
+    resume from a plain answer; it becomes one question per reviewed
+    action instead.
+
     Args:
         payload (object): The `updates` payload of a stream item.
 
     Returns:
-        list[dict]: One `interrupt` event per pending interrupt.
+        list[dict]: One `interrupt` event per pending interrupt, or per
+            reviewed action for a `HumanInTheLoopMiddleware` request.
     """
     if not isinstance(payload, dict):
         return []
@@ -727,13 +839,113 @@ def _interrupt_events(payload: object) -> list[dict]:
         interrupt_id = getattr(interrupt, "id", None)
         if not isinstance(interrupt_id, str) or not interrupt_id:
             continue
+        value = getattr(interrupt, "value", None)
+        hitl_events = _hitl_events(interrupt_id, value)
+        if hitl_events is not None:
+            events.extend(hitl_events)
+            continue
+        events.append({"interrupt": {"id": interrupt_id, "name": "", "reason": value}})
+    return events
+
+
+def _hitl_events(interrupt_id: str, value: object) -> list[dict] | None:
+    """
+    Serialize a `HumanInTheLoopMiddleware` request as one question each.
+
+    The middleware bundles every gated tool call of a turn into a single
+    interrupt — a `HITLRequest`, pairing the reviewed actions with the
+    decisions each allows — and resumes from one decision per action, in
+    the same order. One question per action is what Welt answers that
+    with: a stop carries as many questions as it likes, and the ids the
+    actions get here carry their index back to
+    `decode_interrupt_responses`, which rejoins the answers.
+
+    A value that is not a request of that shape returns None, leaving the
+    caller to pass it through — as does a request the wire has no widgets
+    for, which is one allowing `edit` alone: editing an action's arguments
+    asks for a form Welt does not render.
+
+    Args:
+        interrupt_id (str): The id of the interrupt carrying the request.
+        value (object): The interrupt's value.
+
+    Returns:
+        list[dict] | None: One `interrupt` event per reviewed action, or
+            None when the value is not a request this can translate.
+    """
+    if not isinstance(value, dict):
+        return None
+    action_requests = value.get("action_requests")
+    review_configs = value.get("review_configs")
+    if not isinstance(action_requests, list) or not action_requests:
+        return None
+    if not isinstance(review_configs, list):
+        return None
+    allowed_by_action: dict[str, list] = {}
+    for config in review_configs:
+        if not isinstance(config, dict):
+            continue
+        action_name = config.get("action_name")
+        allowed_decisions = config.get("allowed_decisions")
+        if isinstance(action_name, str) and isinstance(allowed_decisions, list):
+            allowed_by_action[action_name] = allowed_decisions
+    events = []
+    for index, action_request in enumerate(action_requests):
+        if not isinstance(action_request, dict):
+            return None
+        name = action_request.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        allowed = allowed_by_action.get(name)
+        if allowed is None:
+            return None
+        reason = _hitl_reason(action_request, name, allowed)
+        if reason is None:
+            return None
         events.append(
             {
                 "interrupt": {
-                    "id": interrupt_id,
-                    "name": "",
-                    "reason": getattr(interrupt, "value", None),
+                    "id": f"{interrupt_id}{_HITL_ID_SEPARATOR}{index}",
+                    "name": name,
+                    "reason": reason,
                 }
             }
         )
     return events
+
+
+def _hitl_reason(action_request: dict, name: str, allowed: list) -> dict | None:
+    """
+    Build the reason that asks a human to decide on one reviewed action.
+
+    The decisions the action allows decide the widgets, one for one:
+    `approve` and `reject` become buttons carrying the values that
+    identify them on the way back, and `respond` — the human answering on
+    the tool's behalf — becomes the free-text field, labelled by Welt
+    since what an answer means is the agent's call. `edit` is left out,
+    having no widget in the wire.
+
+    The middleware describes every action it asks about, so the
+    description is the question's body; the action's name stands in for a
+    request built without one.
+
+    Args:
+        action_request (dict): One reviewed action of the request.
+        name (str): The action's name.
+        allowed (list): The decisions the action allows.
+
+    Returns:
+        dict | None: The structured reason, or None when the allowed
+            decisions leave no widget to render.
+    """
+    options: list[dict] = []
+    if "approve" in allowed:
+        options.append({"value": _HITL_APPROVE, "label": "Approve", "style": "primary"})
+    if "reject" in allowed:
+        options.append({"value": _HITL_REJECT, "label": "Reject", "style": "danger"})
+    input_spec: dict | None = {} if "respond" in allowed else None
+    if not options and input_spec is None:
+        return None
+    description = action_request.get("description")
+    message = description if isinstance(description, str) and description else name
+    return interrupt_reason(message, options or None, input=input_spec)
