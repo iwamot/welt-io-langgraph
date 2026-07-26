@@ -42,7 +42,7 @@ Turns Welt's resume payload — a mapping of interrupt id to the answer a human 
 agent.astream(
     Command(resume=decode_interrupt_responses(payload["interrupt_responses"])),
     config,
-    stream_mode=["messages", "updates", "custom"],
+    stream_mode=["messages", "updates"],
 )
 ```
 
@@ -50,27 +50,50 @@ The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the co
 
 ### Outbound
 
-#### `renderable_events(stream)`
+#### `renderable_events(stream, files_from=...)`
 
-Reduces the `(mode, payload)` items of `astream(..., stream_mode=["messages", "updates", "custom"])` — whose values Welt does not render — to the events Welt renders:
+Reduces the `(mode, payload)` items of `astream(..., stream_mode=["messages", "updates"])` — whose values Welt does not render — to the events Welt renders:
 
 | LangGraph emits | On the wire | In the Slack thread |
 |---|---|---|
 | Token deltas | `data` | The streamed reply |
 | Tool calls and tool messages | `current_tool_use` / `tool_result` | "Using tool" indicators (tool output stays off the wire) |
-| Image / file / video content blocks a tool or the model returns | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
+| Image / file / video content blocks the model returns, or a tool named in `files_from` returns | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
 | Pending [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | `interrupt` | Buttons and/or a text field |
 
 A run that stops for human input ends its stream with one `interrupt` event per pending interrupt; agents that do not use interrupts see no change.
 
-#### `file_event(name, data)`
-
-Builds the same `file` event from a filename and raw bytes, for attaching arbitrary files of your own. Yield it from the host app alongside the reduced stream, or pass it to LangGraph's custom stream writer to attach a file from inside a tool — `renderable_events` passes it through by itself:
+A tool hands files to the model for either of two reasons — to have it read them, or to give them to the human — and only the agent knows which is which, so name the tools whose files belong in the thread:
 
 ```python
-writer = get_stream_writer()
-writer(file_event("report.csv", csv_bytes))
+async for event in renderable_events(stream, files_from={"create_sample_file"}):
 ```
+
+A tool left out keeps its files to the model: one that reads a PDF for the model does not drop it into the thread as a side effect. A tool named there returns the file as a content block, which the model reads and Welt uploads:
+
+```python
+return [
+    {"type": "text", "text": f"Created {name}.csv."},
+    {
+        "type": "file",
+        "name": name,
+        "mime_type": "text/csv",
+        "base64": b64encode(csv).decode("ascii"),
+    },
+]
+```
+
+A tool message carries the name of the tool that produced it, so nothing else has to be passed in. Uploaded names come from the block's own `name` plus its media type, the block's kind for the rest (`image.png`). That name is also the model's handle on the document — Converse rejects a request whose messages carry two documents under one name, so a tool that returns files has to keep their names apart across the run: the example appends a short uuid to each.
+
+#### `file_event(name, data)`
+
+Builds the same `file` event from a filename and raw bytes, for the files the host app attaches itself:
+
+```python
+yield file_event("report.csv", csv_bytes)
+```
+
+Tools have no use for it — they hand files to the agent as content blocks, and `files_from` decides which of those reach the thread.
 
 #### `interrupt_reason(message, options=..., input=...)`
 

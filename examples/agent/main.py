@@ -13,6 +13,7 @@ JSON wire contract, which welt-io-langgraph adapts in both directions.
 """
 
 import os
+from base64 import b64encode
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -23,14 +24,12 @@ from langchain.tools import tool
 from langchain_aws import ChatBedrockConverse
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.config import get_stream_writer
 from langgraph.func import task
 from langgraph.types import Command, interrupt
 
 from welt_io_langgraph import (
     decode_interrupt_responses,
     decode_messages,
-    file_event,
     interrupt_reason,
     renderable_events,
 )
@@ -59,19 +58,46 @@ def current_time() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-@tool
-def attach_sample_file() -> str:
+def _document_name(stem: str) -> str:
     """
-    Attach a small sample CSV file to the Slack thread.
+    Name a document apart from every other document of the run.
+
+    Converse rejects a request whose messages carry two documents under one
+    name, and the tool that returns a document is the only one placed to
+    keep it apart — it cannot know what the rest of the run named theirs,
+    so it pays the going price of a random tail. The name is the model's
+    handle on the document, and the filename Welt uploads it under.
+
+    Args:
+        stem (str): The readable part of the name.
 
     Returns:
-        str: The outcome of the attachment.
+        str: The stem, tailed apart from the run's other documents.
     """
-    # A `file_event`-shaped value passed to the custom stream surfaces as
-    # a `file` wire event, which Welt uploads to the thread.
-    writer = get_stream_writer()
-    writer(file_event("sample.csv", b"fruit,count\napple,3\nbanana,5\n"))
-    return "Attached sample.csv to the thread."
+    return f"{stem}-{uuid4().hex[:8]}"
+
+
+@tool
+def create_sample_file() -> list[dict]:
+    """
+    Create a small sample CSV file.
+
+    Returns:
+        list[dict]: The outcome, the file carried as a content block —
+            which reaches the model, and the Slack thread because the
+            entrypoint takes files from this tool.
+    """
+    name = _document_name("sample")
+    csv = b"fruit,count\napple,3\nbanana,5\n"
+    return [
+        {"type": "text", "text": f"Created {name}.csv."},
+        {
+            "type": "file",
+            "name": name,
+            "mime_type": "text/csv",
+            "base64": b64encode(csv).decode("ascii"),
+        },
+    ]
 
 
 @tool
@@ -133,19 +159,20 @@ def _drafted_report(topic: str) -> str:
 
 
 @tool
-def sample_draft_report(topic: str) -> str:
+def sample_draft_report(topic: str) -> str | list[dict]:
     """
     Draft a small report on a topic and ask whether to publish it.
 
     A sample of work before an interrupt: the draft is written first,
     then the run pauses to show it for the publish decision. Approval
-    uploads the approved draft to the thread as report.md.
+    returns the approved draft as a markdown file.
 
     Args:
         topic (str): The report topic.
 
     Returns:
-        str: The outcome of the draft.
+        str | list[dict]: The outcome, the approved draft carried as a
+            content block.
     """
     draft = _drafted_report(topic).result()
     answer = interrupt(
@@ -159,17 +186,33 @@ def sample_draft_report(topic: str) -> str:
         )
     )
     if answer == "y":
-        writer = get_stream_writer()
-        writer(file_event("report.md", draft.encode()))
-        return (
-            "The draft was approved and is already published to the thread"
-            " as report.md. The publish flow is complete; no further review"
-            " or approval is needed."
-        )
+        name = _document_name("report")
+        return [
+            {
+                "type": "text",
+                "text": (
+                    "The user answered the publish question in the thread by"
+                    f" pressing Publish, so this draft is already published"
+                    f" there as {name}.md. The publish flow is complete;"
+                    " nothing is left to approve."
+                ),
+            },
+            {
+                "type": "file",
+                "name": name,
+                "mime_type": "text/markdown",
+                "base64": b64encode(draft.encode()).decode("ascii"),
+            },
+        ]
     if answer == "n":
         return "The user discarded the draft; nothing was published."
     return f"The draft was not published. The user said instead: {answer}"
 
+
+# The tools whose files belong in the Slack thread. A tool left out keeps
+# its files to the model — this agent has none, but an agent that reads
+# documents for the model would.
+_FILES_FROM = {"create_sample_file", "sample_draft_report"}
 
 agent = create_agent(
     # Any Converse model with access enabled; an empty MODEL_ID means
@@ -179,7 +222,7 @@ agent = create_agent(
     ),
     tools=[
         current_time,
-        attach_sample_file,
+        create_sample_file,
         sample_dangerous_action,
         sample_draft_report,
     ],
@@ -231,10 +274,8 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
 
     interrupted = False
     # Reduce the stream to the JSON-serializable events Welt renders
-    stream = agent.astream(
-        graph_input, config, stream_mode=["messages", "updates", "custom"]
-    )
-    async for event in renderable_events(stream):
+    stream = agent.astream(graph_input, config, stream_mode=["messages", "updates"])
+    async for event in renderable_events(stream, files_from=_FILES_FROM):
         if "interrupt" in event:
             interrupted = True
         yield event

@@ -11,13 +11,15 @@ from welt_io_langgraph import renderable_events
 PNG_BASE64 = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
 
 
-def rendered(items: list) -> list[dict]:
+def rendered(items: list, files_from: set[str] | None = None) -> list[dict]:
     async def source() -> AsyncIterator:
         for item in items:
             yield item
 
     async def gather() -> list[dict]:
-        return [event async for event in renderable_events(source())]
+        return [
+            event async for event in renderable_events(source(), files_from=files_from)
+        ]
 
     return asyncio.run(gather())
 
@@ -126,18 +128,77 @@ def test_tool_error_becomes_an_error_status() -> None:
     ]
 
 
-def test_tool_message_file_blocks_become_file_events_after_the_result() -> None:
-    message = ToolMessage(
+def _charting_tool_message() -> ToolMessage:
+    return ToolMessage(
         content=[
             {"type": "text", "text": "chart rendered"},
             {"type": "image", "base64": PNG_BASE64, "mime_type": "image/png"},
         ],
         tool_call_id="call-1",
+        name="render_chart",
+    )
+
+
+def test_files_of_a_tool_named_in_files_from_follow_the_result() -> None:
+    items = [("messages", (_charting_tool_message(), {}))]
+
+    assert rendered(items, {"render_chart"}) == [
+        {"tool_result": {"toolUseId": "call-1", "status": "success"}},
+        {"file": {"name": "image.png", "bytes": PNG_BASE64}},
+    ]
+
+
+def test_files_of_a_tool_left_out_of_files_from_stay_off_the_wire() -> None:
+    items = [("messages", (_charting_tool_message(), {}))]
+    only_the_result = [{"tool_result": {"toolUseId": "call-1", "status": "success"}}]
+
+    assert rendered(items, {"file_read"}) == only_the_result
+    assert rendered(items, set()) == only_the_result
+    assert rendered(items) == only_the_result
+
+
+def test_block_name_names_the_upload() -> None:
+    message = ToolMessage(
+        content=[
+            {
+                "type": "file",
+                "name": "sample-3f2a1b9c",
+                "mime_type": "text/csv",
+                "base64": "aGk=",
+            }
+        ],
+        tool_call_id="call-1",
+        name="create_sample_file",
+    )
+
+    assert rendered([("messages", (message, {}))], {"create_sample_file"}) == [
+        {"tool_result": {"toolUseId": "call-1", "status": "success"}},
+        {"file": {"name": "sample-3f2a1b9c.csv", "bytes": "aGk="}},
+    ]
+
+
+def test_a_nameless_block_falls_back_to_its_kind() -> None:
+    message = AIMessage(
+        content=[
+            {"type": "image", "name": "", "base64": "aGk=", "mime_type": "image/png"},
+            {"type": "file", "base64": "aGk=", "mime_type": "application/pdf"},
+        ]
     )
 
     assert rendered([("messages", (message, {}))]) == [
-        {"tool_result": {"toolUseId": "call-1", "status": "success"}},
-        {"file": {"name": "image.png", "bytes": PNG_BASE64}},
+        {"file": {"name": "image.png", "bytes": "aGk="}},
+        {"file": {"name": "file.pdf", "bytes": "aGk="}},
+    ]
+
+
+def test_files_of_an_unnamed_tool_message_stay_off_the_wire() -> None:
+    message = ToolMessage(
+        content=[{"type": "image", "base64": PNG_BASE64, "mime_type": "image/png"}],
+        tool_call_id="call-1",
+    )
+
+    assert rendered([("messages", (message, {}))], {"render_chart"}) == [
+        {"tool_result": {"toolUseId": "call-1", "status": "success"}}
     ]
 
 
@@ -265,30 +326,6 @@ def test_node_updates_yield_nothing() -> None:
 
 def test_non_dict_updates_payload_yields_nothing() -> None:
     assert rendered([("updates", "not a dict")]) == []
-
-
-def test_custom_file_event_is_passed_through() -> None:
-    items = [("custom", {"file": {"name": "report.csv", "bytes": "aGk="}})]
-
-    assert rendered(items) == [{"file": {"name": "report.csv", "bytes": "aGk="}}]
-
-
-def test_custom_file_event_extra_keys_are_slimmed_away() -> None:
-    items = [("custom", {"file": {"name": "report.csv", "bytes": "aGk=", "extra": 1}})]
-
-    assert rendered(items) == [{"file": {"name": "report.csv", "bytes": "aGk="}}]
-
-
-def test_other_custom_values_stay_off_the_wire() -> None:
-    items = [
-        ("custom", "progress: 50%"),
-        ("custom", {"progress": 0.5}),
-        ("custom", {"file": "not a dict"}),
-        ("custom", {"file": {"name": "", "bytes": "aGk="}}),
-        ("custom", {"file": {"name": "report.csv"}}),
-    ]
-
-    assert rendered(items) == []
 
 
 def test_unrenderable_items_are_dropped() -> None:

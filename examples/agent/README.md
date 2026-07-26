@@ -46,9 +46,11 @@ The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for
 ## Tools
 
 - `current_time` — the minimal tool: plain text streaming, nothing else. Ask "what time is it?" to see tool use in the thread.
-- `attach_sample_file` — passes a `file_event` to LangGraph's custom stream writer, which welt-io-langgraph streams into the thread as a file upload. Ask it to attach the sample file.
+- `create_sample_file` — writes a small CSV and returns it as a content block, which the model reads and Welt uploads to the thread. Its name carries a random tail (`sample-3f2a1b9c.csv`) because a document's name has to be unique across the run. Ask it for a sample file.
 - `sample_dangerous_action` — a pretend dangerous action (no side effects, no extra AWS permissions) that pauses for human approval: Welt renders the pause as **Approve** / **Cancel** buttons plus a free-text field in the Slack thread, and whichever answer comes first — a press, or a typed instruction — resumes the run. Ask "deploy to prod", then press a button or type something like "run the tests first". See [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) for the round trip.
-- `sample_draft_report` — drafts a small report, pauses to show the draft for approval, and on approval uploads it to the thread as `report.md`. The draft-then-ask order is the LangGraph interrupt pitfall: an interrupted tool re-executes from its start on resume, so the drafting runs inside a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/durable-execution) — its saved result is reused, keeping the published file identical to the approved draft (the draft is timestamped, so a silent redraft would show). Ask "draft a report about apples", then answer the buttons.
+- `sample_draft_report` — drafts a small report, pauses to show the draft for approval, and on approval returns it as a markdown file (`report-8f3a2c1d.md`, tailed for the same reason). The draft-then-ask order is the LangGraph interrupt pitfall: an interrupted tool re-executes from its start on resume, so the drafting runs inside a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/durable-execution) — its saved result is reused, keeping the published file identical to the approved draft (the draft is timestamped, so a silent redraft would show). Ask "draft a report about apples", then answer the buttons.
+
+The two that produce files are named in the entrypoint's `files_from` — that is what puts their files in the thread, and a tool left out of it would hand its files to the model alone.
 
 ## Optional: file input
 
