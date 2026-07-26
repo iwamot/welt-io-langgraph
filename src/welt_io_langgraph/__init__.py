@@ -14,16 +14,16 @@ not fit it in either direction:
   JSON-serializable (message objects, Interrupt objects), which the
   AgentCore Runtime SDK would degrade to a plain string on the SSE wire.
   `renderable_events` reduces the stream to the events Welt renders, with
-  generated files base64-encoded — the inbound encoding in reverse.
-  `file_event` builds the same `file` event from a name and raw bytes, so
-  tools can attach files of their own through LangGraph's custom stream.
+  the files of the tools the agent names base64-encoded — the inbound
+  encoding in reverse. `file_event` builds the same `file` event from a
+  name and raw bytes, for the files the host app attaches itself.
   `interrupt_reason` builds the reason shape Welt renders as a message
   with buttons, a free-text field, or both when a tool interrupts for
   human input.
 """
 
 import base64
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Collection, Sequence
 
 try:
     from ._version import __version__
@@ -274,12 +274,9 @@ def file_event(name: str, data: bytes) -> dict:
     """
     Build a `file` wire event, which Welt uploads to the Slack thread.
 
-    `renderable_events` emits these for the files a tool or the model
-    generates; this builds the same event from arbitrary bytes, for agents
-    that attach files of their own. Yield it from the host app alongside
-    the reduced stream, or pass it to `get_stream_writer()` inside a tool
-    to attach a file from there — `renderable_events` passes it through by
-    itself.
+    `renderable_events` emits these for the files the model returns and
+    the files of the tools the agent names; this builds the same event from
+    arbitrary bytes, for the files the host app attaches itself.
 
     Args:
         name (str): The upload filename, extension included.
@@ -435,24 +432,34 @@ def _built_input(input_spec: dict) -> dict:
     return built
 
 
-async def renderable_events(stream: AsyncIterator) -> AsyncIterator[dict]:
+async def renderable_events(
+    stream: AsyncIterator, *, files_from: Collection[str] | None = None
+) -> AsyncIterator[dict]:
     """
     Reduce a LangGraph stream to the events Welt renders.
 
     Iterates the `(mode, payload)` items of
-    `astream(..., stream_mode=["messages", "updates", "custom"])` and
-    yields the wire's renderable subset: text chunks (`data`), tool-use
-    indicators (`current_tool_use` / `tool_result`, slimmed so tool output
-    stays off the wire), generated files (`file` — the image, file, and
-    video content blocks a tool or the model returns, plus every
-    `file_event`-shaped value a tool passes to `get_stream_writer()`), and
+    `astream(..., stream_mode=["messages", "updates"])` and yields the
+    wire's renderable subset: text chunks (`data`), tool-use indicators
+    (`current_tool_use` / `tool_result`, slimmed so tool output stays off
+    the wire), files (`file` — the image, file, and video content blocks
+    the model returns, or a tool named in `files_from` returned), and
     interrupts (`interrupt` — each pending interrupt's id and value, the
     value passed through unmodified as the reason since interpreting it is
     the renderer's job). Everything else is dropped.
 
+    Which of the agent's files belong in the reply is the agent's call, so
+    a tool's files become `file` events only when the tool is named in
+    `files_from` — a tool that hands the model a file to read stays off
+    the wire unless it is listed. Files the model itself returns are its
+    reply, and always go. A tool message names its tool, so nothing else
+    has to be passed in.
+
     Args:
         stream (AsyncIterator): The `(mode, payload)` items of a LangGraph
             stream.
+        files_from (Collection[str] | None): The names of the tools whose
+            files become `file` events. None takes files from none of them.
 
     Yields:
         dict: The renderable wire events, in stream order.
@@ -462,18 +469,14 @@ async def renderable_events(stream: AsyncIterator) -> AsyncIterator[dict]:
             continue
         mode, payload = item
         if mode == "messages":
-            for event in _message_events(payload):
+            for event in _message_events(payload, files_from):
                 yield event
         elif mode == "updates":
             for event in _interrupt_events(payload):
                 yield event
-        elif mode == "custom":
-            event = _custom_file_event(payload)
-            if event is not None:
-                yield event
 
 
-def _message_events(payload: object) -> list[dict]:
+def _message_events(payload: object, files_from: Collection[str] | None) -> list[dict]:
     """
     Extract renderable events from a `messages` stream item.
 
@@ -485,10 +488,13 @@ def _message_events(payload: object) -> list[dict]:
     event per file-carrying content block for models that generate files.
     A tool message becomes a `tool_result` event slimmed to the tool call
     id and status, followed by a `file` event per file-carrying content
-    block the tool returned.
+    block the tool returned, when the tool is one the agent takes files
+    from.
 
     Args:
         payload (object): The `messages` payload of a stream item.
+        files_from (Collection[str] | None): The names of the tools whose
+            files become `file` events.
 
     Returns:
         list[dict]: The renderable events, in message order.
@@ -502,7 +508,7 @@ def _message_events(payload: object) -> list[dict]:
     if kind == "ai":
         return _assistant_events(message)
     if kind == "tool":
-        return _tool_events(message)
+        return _tool_events(message, files_from)
     return []
 
 
@@ -551,18 +557,24 @@ def _assistant_events(message: object) -> list[dict]:
     return events
 
 
-def _tool_events(message: object) -> list[dict]:
+def _tool_events(message: object, files_from: Collection[str] | None) -> list[dict]:
     """
     Extract renderable events from a tool message.
 
+    The message carries the name of the tool that produced it, which is
+    what `files_from` is matched against — a tool left out keeps its files
+    to the model.
+
     Args:
         message (object): The tool message of a `messages` payload.
+        files_from (Collection[str] | None): The names of the tools whose
+            files become `file` events.
 
     Returns:
         list[dict]: A `tool_result` event slimmed to the tool call id and
             status — so text tool output stays off the wire — followed by
-            a `file` event per file-carrying content block the tool
-            returned.
+            a `file` event per file-carrying content block a tool the
+            agent takes files from returned.
     """
     tool_call_id = getattr(message, "tool_call_id", None)
     status = getattr(message, "status", None)
@@ -574,7 +586,9 @@ def _tool_events(message: object) -> list[dict]:
             }
         }
     ]
-    events.extend(_file_events(message))
+    name = getattr(message, "name", None)
+    if files_from and isinstance(name, str) and name in files_from:
+        events.extend(_file_events(message))
     return events
 
 
@@ -643,9 +657,7 @@ def _file_events(message: object) -> list[dict]:
         data = block.get("base64")
         if not isinstance(data, str) or not data:
             continue
-        events.append(
-            {"file": {"name": _file_name(kind, block.get("mime_type")), "bytes": data}}
-        )
+        events.append({"file": {"name": _file_name(kind, block), "bytes": data}})
     return events
 
 
@@ -659,23 +671,31 @@ _EXTENSION_BY_SUBTYPE = {
 }
 
 
-def _file_name(kind: str, mime_type: object) -> str:
+def _file_name(kind: str, block: dict) -> str:
     """
-    Synthesize an upload filename for a file-carrying content block.
+    Name a file-carrying content block for its upload.
+
+    The block's own `name` leads when it has one — the same name the model
+    sees on the document built from the block, so the reply and the thread
+    call the file the same thing. Blocks without one fall back to their
+    kind (`image.png`).
 
     Args:
         kind (str): The block's type (image, file, video, or audio).
-        mime_type (object): The block's media type, whose subtype provides
-            the extension.
+        block (dict): The content block, whose `name` names the file and
+            whose media subtype provides the extension.
 
     Returns:
-        str: The block's kind plus the media subtype as extension.
+        str: The block's name or kind, plus the media subtype as extension.
     """
+    name = block.get("name")
+    base = name if isinstance(name, str) and name else kind
+    mime_type = block.get("mime_type")
     subtype = mime_type.split("/", 1)[1] if isinstance(mime_type, str) else ""
     extension = _EXTENSION_BY_SUBTYPE.get(subtype)
     if extension is None:
         extension = subtype if subtype.isalnum() and subtype.islower() else "bin"
-    return f"{kind}.{extension}"
+    return f"{base}.{extension}"
 
 
 def _interrupt_events(payload: object) -> list[dict]:
@@ -717,28 +737,3 @@ def _interrupt_events(payload: object) -> list[dict]:
             }
         )
     return events
-
-
-def _custom_file_event(payload: object) -> dict | None:
-    """
-    Pass through a `file` event a tool put on the custom stream.
-
-    A tool attaches a file by passing a `file_event`-shaped value to
-    `get_stream_writer()`; other custom values stay off the wire.
-
-    Args:
-        payload (object): The `custom` payload of a stream item.
-
-    Returns:
-        dict | None: The `file` event, or None for other custom values.
-    """
-    if not isinstance(payload, dict):
-        return None
-    file = payload.get("file")
-    if not isinstance(file, dict):
-        return None
-    name = file.get("name")
-    data = file.get("bytes")
-    if not isinstance(name, str) or not name or not isinstance(data, str):
-        return None
-    return {"file": {"name": name, "bytes": data}}
