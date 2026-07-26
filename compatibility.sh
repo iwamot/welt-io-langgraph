@@ -8,7 +8,7 @@ mise install aqua:astral-sh/uv
 
 # CI (compatibility.yml) runs this once per supported Python version — the
 # requires-python floor upward — by setting UV_PYTHON.
-# Locally: UV_PYTHON=3.10 ./compatibility.sh
+# Locally: UV_PYTHON=3.12 ./compatibility.sh
 export UV_PROJECT_ENVIRONMENT=".venv-compat/${UV_PYTHON:-default}"
 
 uv sync
