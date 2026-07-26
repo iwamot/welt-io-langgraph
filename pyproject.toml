@@ -3,9 +3,9 @@ name = "welt-io-langgraph"
 dynamic = ["version"]
 description = "The LangGraph (Python) adapter for Welt's wire contract"
 readme = "README.md"
-# Floor matches the AgentCore CLI's generated agent projects (requires-python
-# >= 3.10), so `uv add welt-io-langgraph` resolves there without edits.
-requires-python = ">=3.10"
+# Floor is the oldest Python AgentCore Runtime runs an agent on; nothing below
+# the runtime is supported.
+requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Takashi Iwamoto" }]
 keywords = ["welt", "slack", "agentcore", "bedrock", "langgraph"]
@@ -13,8 +13,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",

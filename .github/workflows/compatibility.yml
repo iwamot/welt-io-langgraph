@@ -15,4 +15,4 @@ jobs:
       contents: read
     uses: iwamot/workflows/.github/workflows/compatibility-python.yml@873e99243e0ab9f834bb4eb42198f701bfe5c21c # v8.4.0
     with:
-      python-versions: '["3.10","3.11","3.12","3.13","3.14"]'
+      python-versions: '["3.12","3.13","3.14"]'

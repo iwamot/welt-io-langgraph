@@ -369,3 +369,210 @@ def test_stream_order_is_preserved() -> None:
         {"data": "b"},
         {"interrupt": {"id": "i-1", "name": "", "reason": "Sure?"}},
     ]
+
+
+def hitl_request(*actions: dict, configs: list | None = None) -> dict:
+    """Build a HumanInTheLoopMiddleware request out of reviewed actions.
+
+    Each action carries its allowed decisions under `allowed`, which the
+    request keeps in its review configs rather than its actions.
+    """
+    if configs is None:
+        configs = [
+            {
+                "action_name": action["name"],
+                "allowed_decisions": action.get("allowed", ["approve", "reject"]),
+            }
+            for action in actions
+        ]
+    return {
+        "action_requests": [
+            {key: value for key, value in action.items() if key != "allowed"}
+            for action in actions
+        ],
+        "review_configs": configs,
+    }
+
+
+def test_hitl_request_becomes_a_question_for_its_action() -> None:
+    request = hitl_request(
+        {
+            "name": "send_email",
+            "args": {"to": "ops@example.com"},
+            "description": "Tool execution requires approval\n\nTool: send_email",
+            "allowed": ["approve", "reject", "respond"],
+        }
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {
+            "interrupt": {
+                "id": "i-1#0",
+                "name": "send_email",
+                "reason": {
+                    "message": "Tool execution requires approval\n\nTool: send_email",
+                    "options": [
+                        {
+                            "value": "welt-io:hitl:approve",
+                            "label": "Approve",
+                            "style": "primary",
+                        },
+                        {
+                            "value": "welt-io:hitl:reject",
+                            "label": "Reject",
+                            "style": "danger",
+                        },
+                    ],
+                    "input": {},
+                },
+            }
+        }
+    ]
+
+
+def test_hitl_request_splits_into_one_question_per_action() -> None:
+    request = hitl_request(
+        {"name": "send_email", "args": {}, "description": "Send it?"},
+        {
+            "name": "ask_expert",
+            "args": {},
+            "description": "Answer for it?",
+            "allowed": ["respond"],
+        },
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {
+            "interrupt": {
+                "id": "i-1#0",
+                "name": "send_email",
+                "reason": {
+                    "message": "Send it?",
+                    "options": [
+                        {
+                            "value": "welt-io:hitl:approve",
+                            "label": "Approve",
+                            "style": "primary",
+                        },
+                        {
+                            "value": "welt-io:hitl:reject",
+                            "label": "Reject",
+                            "style": "danger",
+                        },
+                    ],
+                },
+            }
+        },
+        {
+            "interrupt": {
+                "id": "i-1#1",
+                "name": "ask_expert",
+                "reason": {"message": "Answer for it?", "input": {}},
+            }
+        },
+    ]
+
+
+def test_hitl_action_without_a_description_is_asked_about_by_name() -> None:
+    request = hitl_request({"name": "send_email", "args": {}})
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items)[0]["interrupt"]["reason"]["message"] == "send_email"
+
+
+def test_hitl_request_allowing_only_edit_is_passed_through() -> None:
+    request = hitl_request({"name": "send_email", "args": {}, "allowed": ["edit"]})
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_request_without_review_configs_is_passed_through() -> None:
+    request = {"action_requests": [{"name": "send_email", "args": {}}]}
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_request_with_no_actions_is_passed_through() -> None:
+    request = {"action_requests": [], "review_configs": []}
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_action_without_its_review_config_is_passed_through() -> None:
+    request = hitl_request(
+        {"name": "send_email", "args": {}},
+        configs=[{"action_name": "another_tool", "allowed_decisions": ["approve"]}],
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_request_with_a_malformed_review_config_is_passed_through() -> None:
+    request = hitl_request({"name": "send_email", "args": {}}, configs=["not a dict"])
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_request_with_a_malformed_action_is_passed_through() -> None:
+    request = {
+        "action_requests": ["not a dict"],
+        "review_configs": [{"action_name": "x", "allowed_decisions": ["approve"]}],
+    }
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_action_without_a_name_is_passed_through() -> None:
+    request = {
+        "action_requests": [{"name": "", "args": {}}],
+        "review_configs": [{"action_name": "", "allowed_decisions": ["approve"]}],
+    }
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_review_config_without_decisions_is_passed_through() -> None:
+    request = hitl_request(
+        {"name": "send_email", "args": {}},
+        configs=[{"action_name": "send_email", "allowed_decisions": "approve"}],
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": request}}
+    ]
+
+
+def test_hitl_action_allowing_edit_is_asked_with_the_rest_of_its_widgets() -> None:
+    request = hitl_request(
+        {"name": "send_email", "args": {}, "allowed": ["approve", "edit"]}
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    reason = rendered(items)[0]["interrupt"]["reason"]
+
+    assert [option["label"] for option in reason["options"]] == ["Approve"]
+    assert "input" not in reason

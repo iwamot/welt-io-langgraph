@@ -46,7 +46,7 @@ agent.astream(
 )
 ```
 
-The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the config must point at the interrupted thread, which the host app stashes when an interrupt event goes by (see the [example agent](examples/agent)).
+The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the config must point at the interrupted thread, which the host app stashes when an interrupt event goes by (see the [example agent](examples/agent)). Answers to a [`HumanInTheLoopMiddleware`](#gating-tools-with-humanintheloopmiddleware) request are rejoined into the decisions it resumes from, so the host app calls this the same way either way.
 
 ### Outbound
 
@@ -61,7 +61,7 @@ Reduces the `(mode, payload)` items of `astream(..., stream_mode=["messages", "u
 | Image / file / video content blocks the model returns, or a tool named in `files_from` returns | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
 | Pending [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | `interrupt` | Buttons and/or a text field |
 
-A run that stops for human input ends its stream with one `interrupt` event per pending interrupt; agents that do not use interrupts see no change.
+A run that stops for human input ends its stream with one `interrupt` event per pending interrupt — or per reviewed action, for a [`HumanInTheLoopMiddleware`](#gating-tools-with-humanintheloopmiddleware) request; agents that do not use interrupts see no change.
 
 A tool hands files to the model for either of two reasons — to have it read them, or to give them to the human — and only the agent knows which is which, so name the tools whose files belong in the thread:
 
@@ -120,6 +120,39 @@ answer = interrupt(
 - **Start each conversation turn on a fresh thread.** Welt sends the whole Slack thread every turn by default, so letting the checkpointer stack turns into its own history would double the conversation. Resume alone reuses the interrupted thread's config. (An agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side.)
 - **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default **Approve** / **Deny** buttons, whose answers arrive as `y` / `n`.
 - **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/durable-execution): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.
+
+## Gating tools with `HumanInTheLoopMiddleware`
+
+LangChain's [`HumanInTheLoopMiddleware`](https://docs.langchain.com/oss/python/langchain/middleware#human-in-the-loop) pauses a tool before it runs, named in `interrupt_on` rather than written into the tool — which is what lets a tool the agent did not write, from a library or an MCP server, be gated at all. It works over Welt as-is:
+
+```python
+create_agent(
+    model=...,
+    tools=[send_email],
+    middleware=[
+        HumanInTheLoopMiddleware(
+            interrupt_on={
+                "send_email": InterruptOnConfig(allowed_decisions=["approve", "reject"])
+            }
+        )
+    ],
+    checkpointer=InMemorySaver(),
+)
+```
+
+The decisions an action allows become its widgets, and the answer comes back as the decision the widget stands for:
+
+| Allowed decision | In the Slack thread | On approval of that answer |
+|---|---|---|
+| `approve` | An **Approve** button | The tool runs as the model called it |
+| `reject` | A **Reject** button | The tool does not run; the model is told it was rejected |
+| `respond` | A free-text field | The tool does not run; the typed text reaches the model as the tool's result |
+| `edit` | Nothing | — |
+
+- **A press is identified by the value it carries.** The buttons carry values the adapter mints, so a press maps to the decision its button stands for and every other answer travels on as text — a typed "approve" included, since the wire says which question was answered but not which widget answered it. What such an answer means is read where meaning belongs: it reaches the model as the tool's answer.
+- **`edit` has no widget**, rewriting an action's arguments being a form the wire has no shape for. An action allowing `edit` alongside others is asked about with the widgets for the rest; one allowing `edit` alone is passed through to Welt's fallback rendering, whose answers the middleware cannot resume from.
+- **One request becomes one question per action.** The middleware bundles every gated call of a turn into a single interrupt and resumes from one decision per action; a Welt stop carries as many questions as it likes, so each action is asked about on its own — buttons per action, answered in any order, and Welt resumes the run once all of them are answered.
+- **Write the interrupt yourself when the question depends on the tool's own work.** The middleware knows a call's name and arguments, nothing the tool computes, so showing something the tool produced — a draft, a diff, a dry run — needs `interrupt` inside the tool, as `sample_draft_report` does.
 
 ## Supported Versions
 
