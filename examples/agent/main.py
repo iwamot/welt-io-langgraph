@@ -107,7 +107,7 @@ def sample_dangerous_action(action: str) -> str:
 
     A sample of the approval round trip: the interrupt below pauses the
     run until someone answers in the Slack thread — with the buttons, or
-    by typing an instruction into the text field. Nothing is actually
+    by typing an answer into the text field. Nothing is actually
     executed.
 
     Args:
@@ -123,14 +123,14 @@ def sample_dangerous_action(action: str) -> str:
                 {"value": "y", "label": "Approve", "style": "primary"},
                 {"value": "n", "label": "Cancel"},
             ],
-            input={"label": "Or tell me what to do instead"},
+            input={"label": "Or type your answer"},
         )
     )
     if answer == "y":
         return f"Ran: {action}. (This example doesn't actually run anything.)"
     if answer == "n":
         return "The action was cancelled by the user."
-    return f"The action was not run. The user said instead: {answer}"
+    return f"The action was not run. The user answered: {answer}"
 
 
 @task
@@ -182,7 +182,7 @@ def sample_draft_report(topic: str) -> str | list[dict]:
                 {"value": "y", "label": "Publish", "style": "primary"},
                 {"value": "n", "label": "Discard"},
             ],
-            input={"label": "Or tell me what to fix"},
+            input={"label": "Or type your answer"},
         )
     )
     if answer == "y":
@@ -206,7 +206,7 @@ def sample_draft_report(topic: str) -> str | list[dict]:
         ]
     if answer == "n":
         return "The user discarded the draft; nothing was published."
-    return f"The draft was not published. The user said instead: {answer}"
+    return f"The draft was not published. The user answered: {answer}"
 
 
 # The tools whose files belong in the Slack thread. A tool left out keeps

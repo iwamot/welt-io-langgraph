@@ -107,7 +107,7 @@ answer = interrupt(
             {"value": "y", "label": "Deploy", "style": "primary"},
             {"value": "n", "label": "Cancel"},
         ],
-        input={"label": "Or tell me what to do instead"},
+        input={"label": "Or type your answer"},
     )
 )
 ```
