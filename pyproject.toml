@@ -19,7 +19,16 @@ classifiers = [
     "Topic :: Software Development",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    # Validating the payload against Welt's published schema is what this
+    # adapter does instead of hand-written checks, so the validator is a
+    # runtime dependency rather than a development one.
+    "jsonschema>=4.26.0",
+    # The reply stream carries LangChain's own message objects, which are
+    # read as those types rather than guessed at by attribute name. Anyone
+    # running a LangGraph agent already has this.
+    "langchain-core>=1.5.0",
+]
 
 [project.urls]
 Repository = "https://github.com/iwamot/welt-io-langgraph"
@@ -69,7 +78,7 @@ exclude = [
 exclude-newer = "1 day"
 
 [tool.ruff]
-include = ["*.py", "examples/**/*.py", "src/**/*.py", "tests/**/*.py"]
+include = ["*.py", "examples/**/*.py", "scripts/**/*.py", "src/**/*.py", "tests/**/*.py"]
 
 [tool.ruff.lint]
 # Reference: https://pydevtools.com/handbook/how-to/how-to-configure-recommended-ruff-defaults/
@@ -98,7 +107,7 @@ ignore = [
 ]
 
 [tool.ty.src]
-include = ["examples", "src", "tests"]
+include = ["examples", "scripts", "src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

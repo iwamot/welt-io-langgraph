@@ -1,3 +1,6 @@
+import pytest
+from jsonschema.exceptions import ValidationError
+
 from welt_io_langgraph import decode_interrupt_responses
 
 
@@ -22,14 +25,20 @@ def test_the_input_is_left_untouched() -> None:
     assert answers == {"i-1": "y"}
 
 
-def test_non_string_answers_are_skipped() -> None:
-    answers = {"i-1": "y", "i-2": 42, "i-3": None}
-
-    assert decode_interrupt_responses(answers) == {"i-1": "y"}
-
-
-def test_no_answers_decode_to_an_empty_mapping() -> None:
-    assert decode_interrupt_responses({}) == {}
+@pytest.mark.parametrize(
+    "responses",
+    [
+        {},
+        [("i-1", "approve")],
+        "not a mapping",
+        {"i-1": 42},
+        {"i-1": None},
+        {"i-1": "y", "i-2": 42},
+    ],
+)
+def test_rejects_a_payload_that_violates_the_wire_contract(responses: object) -> None:
+    with pytest.raises(ValidationError):
+        decode_interrupt_responses(responses)
 
 
 def test_hitl_answers_are_rejoined_into_decisions() -> None:
@@ -66,10 +75,12 @@ def test_an_answer_carrying_no_button_value_becomes_a_respond() -> None:
     }
 
 
-def test_hitl_answers_leaving_a_gap_are_dropped() -> None:
+def test_hitl_answers_leaving_a_gap_travel_on_for_the_middleware_to_refuse() -> None:
     answers = {"i-1#0": "welt-io:hitl:approve", "i-1#2": "welt-io:hitl:approve"}
 
-    assert decode_interrupt_responses(answers) == {}
+    assert decode_interrupt_responses(answers) == {
+        "i-1": {"decisions": [{"type": "approve"}, {"type": "approve"}]}
+    }
 
 
 def test_hitl_answers_keep_the_place_of_their_first_answer() -> None:

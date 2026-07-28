@@ -1,6 +1,7 @@
 import base64
 
 import pytest
+from jsonschema.exceptions import ValidationError
 
 from welt_io_langgraph import file_event
 
@@ -21,5 +22,5 @@ def test_empty_bytes_encode_to_an_empty_string() -> None:
 
 
 def test_empty_name_is_rejected() -> None:
-    with pytest.raises(ValueError, match="name"):
+    with pytest.raises(ValidationError):
         file_event("", b"data")
