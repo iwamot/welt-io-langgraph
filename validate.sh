@@ -10,6 +10,8 @@ mise install
 uv sync
 uv run pip-licenses --partial-match --allow-only="Apache;BSD;CNRI-Python;ISC;MIT;MPL;PSF;Python Software Foundation"
 uv audit
+# Checks the vendored wire schemas and compiles them into the package.
+uv run python scripts/generate_schema.py
 ruff check --fix
 ruff format
 ty check --error-on-warning

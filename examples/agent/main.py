@@ -263,18 +263,14 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
             resume=decode_interrupt_responses(payload["interrupt_responses"])
         )
     else:
-        messages = payload.get("messages")
-        if not isinstance(messages, list) or not messages:
-            yield {
-                "data": "I received an empty conversation, "
-                "so there is nothing to reply to."
-            }
-            return
+        # A payload that violates the wire contract raises, which the SDK
+        # reports as an `error` event.
+        messages = decode_messages(payload.get("messages"))
         # A fresh thread per turn: Welt sends the whole Slack thread every
         # time, so letting the checkpointer stack turns into its own
         # history would double the conversation.
         config = RunnableConfig(configurable={"thread_id": uuid4().hex})
-        graph_input = {"messages": decode_messages(messages)}
+        graph_input = {"messages": messages}
 
     interrupted = False
     # Reduce the stream to the JSON-serializable events Welt renders

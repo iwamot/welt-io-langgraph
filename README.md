@@ -32,7 +32,17 @@ Turns Welt's Converse-shaped messages — built from the Slack thread, file byte
 | Document | File (the document's name carried as `filename`) |
 | Video | Video |
 
-Each file-carrying block gets the media type LangChain models expect in place of the Converse format token, and the base64 data stays base64 — standard content blocks need no decoding. Malformed entries are skipped.
+Each file-carrying block gets the media type LangChain models expect in place of the Converse format token, and the base64 data stays base64 — standard content blocks need no decoding.
+
+#### Payloads that violate the contract
+
+Both functions check the payload against [Welt's published schema](https://github.com/iwamot/welt/blob/main/schema/request-payload.schema.json), vendored into this repository as `schema/`, and raise `jsonschema.exceptions.ValidationError` on one that fails — naming the path that broke it, down to the block:
+
+```
+$[1].content[0].image.source.bytes: '' should be non-empty
+```
+
+Welt does not send those, so a raise means the caller is not Welt or Welt has a bug; either way, decoding what is left would hand the agent a conversation with a turn missing. The schema is the whole of what this adapter checks: what it does not describe — whether the base64 decodes, the order the blocks arrive in — travels on for LangChain and Bedrock to refuse.
 
 #### `decode_interrupt_responses(responses)`
 
@@ -97,7 +107,7 @@ Tools have no use for it — they hand files to the agent as content blocks, and
 
 #### `interrupt_reason(message, options=..., input=...)`
 
-Builds the structured reason Welt renders as a message with the specified widgets — choice buttons (`options`), a free-text field (`input`), or both. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt); omitted fields keep Welt's defaults, and a typo becomes an immediate `ValueError` instead of a silent fallback to Welt's default rendering:
+Builds the structured reason Welt renders as a message with the specified widgets — choice buttons (`options`), a free-text field (`input`), or both. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt); omitted fields keep Welt's defaults, and the reason is checked against Welt's schema before it is returned, so a typo raises here instead of reaching the thread as Welt's default rendering:
 
 ```python
 answer = interrupt(

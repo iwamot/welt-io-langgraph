@@ -244,20 +244,13 @@ def test_human_message_yields_nothing() -> None:
     assert rendered([("messages", (HumanMessage("hi"), {}))]) == []
 
 
-def test_chunk_shaped_value_without_tool_call_chunks_keeps_its_text() -> None:
-    # The attribute shape of a token delta, minus the parts a foreign
-    # object may lack.
-    chunk = SimpleNamespace(type="AIMessageChunk", text="hel", tool_call_chunks=None)
+def test_a_value_that_only_looks_like_a_message_yields_nothing() -> None:
+    # The stream is read through LangChain's own types rather than by
+    # guessing at attributes, so a foreign object carrying the same names
+    # is not mistaken for a message.
+    lookalike = SimpleNamespace(type="AIMessageChunk", text="hel", tool_call_chunks=[])
 
-    assert rendered([("messages", (chunk, {}))]) == [{"data": "hel"}]
-
-
-def test_assistant_shaped_value_without_calls_or_blocks_keeps_its_text() -> None:
-    message = SimpleNamespace(
-        type="ai", text="hi", tool_calls=None, content_blocks=None
-    )
-
-    assert rendered([("messages", (message, {}))]) == [{"data": "hi"}]
+    assert rendered([("messages", (lookalike, {}))]) == []
 
 
 def test_non_dict_tool_calls_and_content_blocks_are_skipped() -> None:
