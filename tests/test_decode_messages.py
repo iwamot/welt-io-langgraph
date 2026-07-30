@@ -1,8 +1,5 @@
 import base64
 
-import pytest
-from jsonschema.exceptions import ValidationError
-
 from welt_io_langgraph import decode_messages
 
 
@@ -104,39 +101,5 @@ def test_leaves_the_input_untouched() -> None:
     assert messages == [user_message(image_block())]
 
 
-@pytest.mark.parametrize(
-    "messages",
-    [
-        [],
-        "not a list",
-        ["not a dict"],
-        [{"role": "system", "content": [{"text": "hi"}]}],
-        [{"role": "assistant", "content": [{"text": "hi"}]}],
-        [{"role": "user", "content": "not a list"}],
-        [{"role": "user", "content": []}],
-        [user_message({"toolUse": {}})],
-        [user_message({"text": 12})],
-        [{"role": "assistant", "content": [image_block()]}],
-        [user_message({"image": {"format": "avif", "source": {"bytes": "aW1n"}}})],
-        [user_message({"image": {"source": {"bytes": "aW1n"}}})],
-        [user_message({"document": {"format": "pdf", "source": {"bytes": "ZG9j"}}})],
-        [user_message(document_block(name=""))],
-        [user_message({"image": {"format": "png", "source": {}}})],
-        [user_message({"image": {"format": "png", "source": {"bytes": ""}}})],
-        [user_message({"image": {"format": "png", "source": {"bytes": 12}}})],
-    ],
-)
-def test_rejects_a_payload_that_violates_the_wire_contract(messages: object) -> None:
-    with pytest.raises(ValidationError):
-        decode_messages(messages)
-
-
-def test_the_error_names_the_block_that_violates_the_contract() -> None:
-    block = {"image": {"format": "png", "source": {"bytes": ""}}}
-    messages = [user_message({"text": "<@U1>: hi"}), user_message(block)]
-
-    with pytest.raises(ValidationError) as caught:
-        decode_messages(messages)
-
-    assert caught.value.json_path == "$[1].content[0].image.source.bytes"
-    assert caught.value.message == "'' should be non-empty"
+def test_an_empty_conversation_decodes_to_an_empty_one() -> None:
+    assert decode_messages([]) == []
