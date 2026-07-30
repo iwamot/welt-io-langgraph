@@ -263,9 +263,10 @@ async def invoke(payload: dict) -> AsyncIterator[dict]:
             resume=decode_interrupt_responses(payload["interrupt_responses"])
         )
     else:
-        # A payload that violates the wire contract raises, which the SDK
-        # reports as an `error` event.
-        messages = decode_messages(payload.get("messages"))
+        # The envelope key is the discriminator, so a payload without
+        # either one is Welt's bug, and the KeyError it raises is reported
+        # as an `error` event by the SDK.
+        messages = decode_messages(payload["messages"])
         # A fresh thread per turn: Welt sends the whole Slack thread every
         # time, so letting the checkpointer stack turns into its own
         # history would double the conversation.

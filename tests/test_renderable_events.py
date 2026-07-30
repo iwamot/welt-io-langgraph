@@ -1,8 +1,10 @@
 import asyncio
 import base64
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.types import Interrupt
 
@@ -238,6 +240,49 @@ def test_file_block_without_base64_yields_nothing() -> None:
     message = AIMessage(content=[{"type": "image", "url": "https://example.com/a.png"}])
 
     assert rendered([("messages", (message, {}))]) == []
+
+
+def test_a_file_with_no_bytes_stays_off_the_wire() -> None:
+    message = ToolMessage(
+        content=[
+            {"type": "file", "name": "sample", "mime_type": "text/csv", "base64": ""}
+        ],
+        tool_call_id="call-1",
+        name="create_sample_file",
+    )
+
+    assert rendered([("messages", (message, {}))], {"create_sample_file"}) == [
+        {"tool_result": {"toolUseId": "call-1", "status": "success"}}
+    ]
+
+
+def test_an_empty_file_is_logged_against_the_tool_that_returned_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    message = ToolMessage(
+        content=[{"type": "file", "mime_type": "text/csv", "base64": ""}],
+        tool_call_id="call-1",
+        name="create_sample_file",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        rendered([("messages", (message, {}))], {"create_sample_file"})
+
+    assert "create_sample_file" in caplog.text
+    assert "file.csv" in caplog.text
+
+
+def test_an_empty_file_from_the_model_is_logged_against_the_model(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    message = AIMessage(
+        content=[{"type": "image", "base64": "", "mime_type": "image/png"}]
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert rendered([("messages", (message, {}))]) == []
+
+    assert "the model" in caplog.text
 
 
 def test_human_message_yields_nothing() -> None:

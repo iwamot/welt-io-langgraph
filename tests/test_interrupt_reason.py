@@ -1,7 +1,14 @@
-import pytest
-from jsonschema.exceptions import ValidationError
+from typing import Literal
 
-from welt_io_langgraph import interrupt_reason
+import pytest
+
+from welt_io_langgraph import (
+    _checked_input,
+    _checked_message,
+    _checked_option,
+    _checked_options,
+    interrupt_reason,
+)
 
 
 def test_builds_message_and_options() -> None:
@@ -23,7 +30,7 @@ def test_builds_message_and_options() -> None:
 
 
 @pytest.mark.parametrize("style", ["primary", "danger"])
-def test_option_style_is_carried(style: str) -> None:
+def test_option_style_is_carried(style: Literal["primary", "danger"]) -> None:
     reason = interrupt_reason("Sure?", [{"value": "y", "label": "Yes", "style": style}])
 
     assert reason["options"] == [{"value": "y", "label": "Yes", "style": style}]
@@ -92,30 +99,94 @@ def test_options_and_input_carry_both() -> None:
     [
         (("", [{"value": "y"}]), {}),
         (("Sure?", []), {}),
-        (("Sure?", [{"value": "y", "styl": "primary"}]), {}),
-        (("Sure?", [{"label": "Yes"}]), {}),
         (("Sure?", [{"value": ""}]), {}),
         (("Sure?", [{"value": "y", "label": ""}]), {}),
-        (("Sure?", [{"value": "y", "style": "warning"}]), {}),
-        (("Sure?", [{"value": "y"} for _ in range(26)]), {}),
-        (("Sure?", [{"value": "v" * 1801}]), {}),
         (("Sure?",), {}),
         (("",), {"input": {}}),
         (("Sure?",), {"input": {"label": ""}}),
-        (("Sure?",), {"input": {"label": 42}}),
-        (("Sure?",), {"input": {"multiline": "yes"}}),
-        (("Sure?",), {"input": {"placeholder": "Type here"}}),
-        (("Sure?", [{"value": ""}]), {"input": {}}),
         (("Sure?", []), {"input": {}}),
     ],
 )
 def test_rejects_a_reason_welt_would_not_render(args: tuple, kwargs: dict) -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         interrupt_reason(*args, **kwargs)
 
 
-def test_the_error_names_the_offending_field() -> None:
-    with pytest.raises(ValidationError) as caught:
-        interrupt_reason("Sure?", [{"value": "y", "style": "warning"}])
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [
+        (("Sure?", [{"value": "y"} for _ in range(26)]), {}),
+        (("Sure?", [{"value": "v" * 1801}]), {}),
+        (("v" * 12_001, [{"value": "y"}]), {}),
+    ],
+)
+def test_welts_own_rendering_caps_are_left_to_welt(args: tuple, kwargs: dict) -> None:
+    assert interrupt_reason(*args, **kwargs)
 
-    assert caught.value.json_path == "$.options[0].style"
+
+# --- what the type checker cannot reach --------------------------------------
+#
+# A caller who builds the options in a variable, or runs no type checker at
+# all, gets an error from these instead of Welt's default buttons in the
+# thread. They take `object` for the same reason: a deliberately wrong value
+# written against the typed signature would not survive `ty`.
+
+
+@pytest.mark.parametrize("message", [42, None, b"Sure?"])
+def test_a_message_that_is_not_a_string_is_refused(message: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_message(message)
+
+
+@pytest.mark.parametrize("options", [{"value": "y"}, "y", 42, None])
+def test_options_that_are_not_a_sequence_are_refused(options: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_options(options)
+
+
+@pytest.mark.parametrize("option", ["y", None, [("value", "y")]])
+def test_an_option_that_is_not_a_dict_is_refused(option: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_option(option)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [{"value": 42}, {"value": "y", "label": 42}],
+)
+def test_an_option_value_of_the_wrong_type_is_refused(option: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_option(option)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        {"label": "Yes"},
+        {"value": "y", "style": "warning"},
+        {"value": "y", "labl": "Yes"},
+    ],
+)
+def test_an_option_welt_would_not_render_is_refused(option: object) -> None:
+    with pytest.raises(ValueError):
+        _checked_option(option)
+
+
+def test_the_error_names_the_key_that_was_misspelled() -> None:
+    with pytest.raises(ValueError) as caught:
+        _checked_option({"value": "y", "labl": "Yes"})
+
+    assert "labl" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "input_spec", ["City", None, {"label": 42}, {"multiline": "yes"}]
+)
+def test_an_input_of_the_wrong_type_is_refused(input_spec: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_input(input_spec)
+
+
+def test_an_input_key_welt_does_not_know_is_refused() -> None:
+    with pytest.raises(ValueError):
+        _checked_input({"placeholder": "Type here"})

@@ -14,33 +14,33 @@ not fit it in either direction:
 - Outbound, raw `astream` items carry values that are not
   JSON-serializable (message objects, Interrupt objects), which the
   AgentCore Runtime SDK would degrade to a plain string on the SSE wire.
-  `renderable_events` reduces the stream to the events Welt renders, with
-  the files of the tools the agent names base64-encoded — the inbound
-  encoding in reverse. `file_event` builds the same `file` event from a
-  name and raw bytes, for the files the host app attaches itself.
-  `interrupt_reason` builds the reason shape Welt renders as a message
-  with buttons, a free-text field, or both when a tool interrupts for
-  human input, and the requests a `HumanInTheLoopMiddleware` raises
-  become that shape too — one question per reviewed action.
+  `renderable_events` reduces the stream to the events Welt renders, the
+  files of the tools the agent names among them — carried as the base64
+  the content blocks already hold. `interrupt_reason` builds the shape Welt
+  renders as a message with buttons, a free-text field, or both when a
+  tool interrupts for human input, and the requests a
+  `HumanInTheLoopMiddleware` raises become that shape too — one question
+  per reviewed action.
 
-Neither direction is checked by hand. What arrives is checked against
-Welt's published schemas, vendored as `schema/` and compiled into
-`_schema.py`, and what the builders produce is checked against them before
-it is returned. The rest is read as the types that define it: LangChain's
-message objects on the way out, rather than whatever carries the right
-attribute names.
+What Welt sends is taken as correct. Welt builds the payload and checks its
+own output against the wire contract before releasing it, so a payload that
+departs from the contract is a bug on the sending side, not an input to
+guard against — a malformed one surfaces as an ordinary error from
+whatever touches it first. What this adapter checks is the other thing:
+the values its own caller passes to `interrupt_reason`, since Welt renders
+a reason it cannot match as its default buttons, silently.
+
+The reply stream is read as the types that define it: LangChain's message
+objects, rather than whatever carries the right attribute names. Only what
+Welt reads goes on the wire — an event carrying more than that costs
+bandwidth for something the renderer discards.
 """
 
-import base64
+import logging
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
-from typing import cast
+from typing import Literal, NotRequired, TypedDict
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import best_match
-from jsonschema.protocols import Validator
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
-
-from ._schema import REPLY_EVENTS, REQUEST_PAYLOAD
 
 try:
     from ._version import __version__
@@ -48,65 +48,15 @@ except ImportError:
     __version__ = "0.0.0+unknown"
 
 __all__ = [
+    "InputSpec",
+    "OptionSpec",
     "decode_interrupt_responses",
     "decode_messages",
-    "file_event",
     "interrupt_reason",
     "renderable_events",
 ]
 
-
-# One validator per envelope value, built once: `decode_messages` and
-# `decode_interrupt_responses` each take the value rather than the whole
-# payload, so each points at the schema's definition for it.
-def _validator(schema: dict, definition: str) -> Validator:
-    """
-    Build a validator for one definition of a wire schema.
-
-    Args:
-        schema (dict): The schema carrying the definition.
-        definition (str): The name under the schema's `$defs`.
-
-    Returns:
-        Validator: The validator.
-    """
-    return Draft202012Validator(
-        {"$ref": f"#/$defs/{definition}", "$defs": schema["$defs"]}
-    )
-
-
-# Inbound: the two envelope values, each taken on its own.
-_MESSAGES = _validator(REQUEST_PAYLOAD, "messages")
-_INTERRUPT_RESPONSES = _validator(REQUEST_PAYLOAD, "interruptResponses")
-
-# Outbound: what the builders below must produce for Welt to render it.
-_FILE = _validator(REPLY_EVENTS, "file")
-_STRUCTURED_REASON = _validator(REPLY_EVENTS, "structuredReason")
-
-
-def _checked(validator: Validator, payload: object) -> None:
-    """
-    Check a payload, raising the most specific error it produced.
-
-    A message is checked against one definition per role, so a violation
-    inside one fails the pair and is reported against the message as a
-    whole. The error that says which block, and why, is among the sub-
-    errors, which is the one worth raising.
-
-    Args:
-        validator (Validator): The validator for this envelope value.
-        payload (object): The value from Welt's payload.
-
-    Returns:
-        None
-
-    Raises:
-        jsonschema.exceptions.ValidationError: If the payload violates the
-            wire contract.
-    """
-    error = best_match(validator.iter_errors(payload))
-    if error is not None:
-        raise error
+logger = logging.getLogger(__name__)
 
 
 # The media types LangChain models expect, by Converse format token.
@@ -142,7 +92,7 @@ _VIDEO_MIME_TYPES = {
 }
 
 
-def decode_messages(messages: object) -> list:
+def decode_messages(messages: list) -> list:
     """
     Decode Welt's messages payload into the messages LangGraph consumes.
 
@@ -153,25 +103,15 @@ def decode_messages(messages: object) -> list:
     image blocks, and document and video blocks file and video blocks. The
     result feeds the graph input (`{"messages": decoded}`) as-is.
 
-    The payload is checked against Welt's published schema first, so a
-    payload that departs from the wire contract raises rather than reaching
-    the agent as a smaller version of itself.
-
     Args:
-        messages (object): The `messages` value of Welt's payload.
+        messages (list): The `messages` value of Welt's payload.
 
     Returns:
         list: Role/content message dicts for the graph input.
-
-    Raises:
-        jsonschema.exceptions.ValidationError: If the payload violates the
-            wire contract. The error names the offending path.
     """
-    _checked(_MESSAGES, messages)
-    # The schema has vouched for the shape; the cast tells the type checker.
     return [
         {"role": message["role"], "content": _decoded_content(message["content"])}
-        for message in cast(list, messages)
+        for message in messages
     ]
 
 
@@ -180,8 +120,7 @@ def _decoded_content(content: list) -> list[dict]:
     Decode one message's Converse content blocks into standard blocks.
 
     Args:
-        content (list): The message's `content`, already checked against
-            the schema.
+        content (list): The message's `content`.
 
     Returns:
         list[dict]: The standard content blocks, in content order.
@@ -194,7 +133,7 @@ def _decoded_block(block: dict) -> dict:
     Decode one Converse content block into its standard counterpart.
 
     Args:
-        block (dict): A content block, already checked against the schema.
+        block (dict): A Converse content block.
 
     Returns:
         dict: The standard content block.
@@ -236,7 +175,7 @@ _HITL_APPROVE = "welt-io:hitl:approve"
 _HITL_REJECT = "welt-io:hitl:reject"
 
 
-def decode_interrupt_responses(responses: object) -> dict:
+def decode_interrupt_responses(responses: dict) -> dict:
     """
     Decode Welt's interrupt answers into LangGraph's resume input.
 
@@ -244,10 +183,6 @@ def decode_interrupt_responses(responses: object) -> dict:
     id to the answer a human chose in the thread. LangGraph resumes from
     the same mapping — the returned dict feeds `Command(resume=...)`
     directly, answering every pending interrupt at once.
-
-    The payload is checked against Welt's published schema first, so
-    resuming a run with an answer short raises rather than happening
-    quietly.
 
     The answers to a `HumanInTheLoopMiddleware` request arrive under the
     per-action ids `renderable_events` split it into, and are rejoined
@@ -258,21 +193,15 @@ def decode_interrupt_responses(responses: object) -> dict:
     means is for the agent to decide.
 
     Args:
-        responses (object): The `interrupt_responses` value of Welt's
+        responses (dict): The `interrupt_responses` value of Welt's
             payload.
 
     Returns:
         dict: The interrupt id to answer mapping for `Command(resume=...)`.
-
-    Raises:
-        jsonschema.exceptions.ValidationError: If the payload violates the
-            wire contract. The error names the offending path.
     """
-    _checked(_INTERRUPT_RESPONSES, responses)
     decoded: dict = {}
     answers_by_request: dict[str, dict[int, str]] = {}
-    # The schema has vouched for the shape; the cast tells the type checker.
-    for interrupt_id, answer in cast(dict, responses).items():
+    for interrupt_id, answer in responses.items():
         split = _split_hitl_id(interrupt_id)
         if split is None:
             decoded[interrupt_id] = answer
@@ -351,35 +280,31 @@ def _hitl_decision(answer: str) -> dict:
     return {"type": "respond", "message": answer}
 
 
-def file_event(name: str, data: bytes) -> dict:
-    """
-    Build a `file` wire event, which Welt uploads to the Slack thread.
+class OptionSpec(TypedDict):
+    """One button of a structured interrupt reason."""
 
-    `renderable_events` emits these for the files the model returns and
-    the files of the tools the agent names; this builds the same event from
-    arbitrary bytes, for the files the host app attaches itself.
+    value: str
+    label: NotRequired[str]
+    style: NotRequired[Literal["primary", "danger"]]
 
-    Args:
-        name (str): The upload filename, extension included.
-        data (bytes): The raw file bytes.
 
-    Returns:
-        dict: The `file` event (name plus base64 bytes).
+class InputSpec(TypedDict):
+    """The free-text field of a structured interrupt reason."""
 
-    Raises:
-        jsonschema.exceptions.ValidationError: If the event would not be
-            one Welt renders — a nameless file, which it drops.
-    """
-    event = {"file": {"name": name, "bytes": base64.b64encode(data).decode("ascii")}}
-    _checked(_FILE, event["file"])
-    return event
+    label: NotRequired[str]
+    multiline: NotRequired[bool]
+
+
+_OPTION_KEYS = frozenset({"value", "label", "style"})
+_INPUT_KEYS = frozenset({"label", "multiline"})
+_STYLES = frozenset({"primary", "danger"})
 
 
 def interrupt_reason(
     message: str,
-    options: Sequence[dict] | None = None,
+    options: Sequence[OptionSpec] | None = None,
     *,
-    input: dict | None = None,
+    input: InputSpec | None = None,
 ) -> dict:
     """
     Build an interrupt reason that Welt renders as the specified widgets.
@@ -388,38 +313,187 @@ def interrupt_reason(
     (`options`), a free-text field whose submitted text becomes the
     interrupt's response (`input`), or both — whichever answer comes
     first, a pressed button or the submitted text, settles the question.
-    Both widget specs are the wire's own shapes; building them through
-    this helper checks the result against Welt's published schema, so a
-    typo raises here instead of reaching the thread as Welt's default
-    rendering — which is what a reason it cannot match falls back to,
-    silently.
+
+    Building the reason through this helper is what makes a typo an error.
+    `interrupt` takes its value as `Any`, so a dict literal handed to it
+    directly is checked by nothing, and Welt's reaction to a reason it
+    cannot match is its default Approve / Deny buttons — no error, no log,
+    just widgets the author did not ask for. The typed parameters here
+    catch a misspelled key before the run, and the checks below catch it in
+    runs where no type checker was involved.
+
+    What is checked is the shape, not the size: Welt's own rendering caps
+    (how many buttons one Slack block holds, how long a button value may
+    be) are Welt's to enforce, and a copy of them here would be four copies
+    to keep in step with a number only Welt knows.
 
     Args:
         message (str): The text Welt shows above the widgets.
-        options (Sequence[dict] | None): One dict per button: a required
-            `value` (what the interrupting tool receives as the response
-            when the button is pressed), an optional `label` (the button
-            text; omitted, Welt shows the value), and an optional `style`
-            ("primary" or "danger").
-        input (dict | None): The free-text field: an optional `label` (the
-            field's label) and an optional `multiline` (whether the field
-            accepts multiple lines) — `{}` takes Welt's defaults for both.
-            None omits the field.
+        options (Sequence[OptionSpec] | None): One dict per button: a
+            required `value` (what the interrupting tool receives as the
+            response when the button is pressed), an optional `label` (the
+            button text; omitted, Welt shows the value), and an optional
+            `style` ("primary" or "danger").
+        input (InputSpec | None): The free-text field: an optional `label`
+            (the field's label) and an optional `multiline` (whether the
+            field accepts multiple lines) — `{}` takes Welt's defaults for
+            both. None omits the field.
 
     Returns:
         dict: The reason to pass to `interrupt`.
 
     Raises:
-        jsonschema.exceptions.ValidationError: If the reason would not be
-            one Welt renders as widgets.
+        TypeError: If a value is of the wrong type.
+        ValueError: If a key is unknown, a required string is empty, or the
+            reason specifies no widget at all.
     """
-    reason: dict = {"message": message}
+    if options is None and input is None:
+        raise ValueError("a reason needs options, input, or both")
+    reason: dict = {"message": _checked_message(message)}
     if options is not None:
-        reason["options"] = list(options)
+        reason["options"] = _checked_options(options)
     if input is not None:
-        reason["input"] = input
-    _checked(_STRUCTURED_REASON, reason)
+        reason["input"] = _checked_input(input)
     return reason
+
+
+def _checked_message(message: object) -> str:
+    """
+    Check a reason's message.
+
+    Args:
+        message (object): The message the caller passed.
+
+    Returns:
+        str: The message.
+
+    Raises:
+        TypeError: If it is not a string.
+        ValueError: If it is empty.
+    """
+    if not isinstance(message, str):
+        raise TypeError(f"message must be a str, not {type(message).__name__}")
+    if not message:
+        raise ValueError("message must not be empty")
+    return message
+
+
+def _checked_options(options: object) -> list[dict]:
+    """
+    Check a reason's options.
+
+    Args:
+        options (object): The options the caller passed.
+
+    Returns:
+        list[dict]: The options, as a list.
+
+    Raises:
+        TypeError: If the options, or one of them, are of the wrong type.
+        ValueError: If there are none, or one carries an unknown key or an
+            empty value.
+    """
+    if isinstance(options, (str, bytes)) or not isinstance(options, Sequence):
+        raise TypeError(f"options must be a sequence, not {type(options).__name__}")
+    if not options:
+        raise ValueError("options must not be empty; omit it to show no buttons")
+    return [_checked_option(option) for option in options]
+
+
+def _checked_option(option: object) -> dict:
+    """
+    Check one option of a reason.
+
+    Args:
+        option (object): The option the caller passed.
+
+    Returns:
+        dict: The option.
+
+    Raises:
+        TypeError: If it, or one of its values, is of the wrong type.
+        ValueError: If it carries an unknown key, an empty `value` or
+            `label`, or a style Welt does not render.
+    """
+    if not isinstance(option, dict):
+        raise TypeError(f"an option must be a dict, not {type(option).__name__}")
+    _refuse_unknown_keys(option, _OPTION_KEYS, "an option")
+    if "value" not in option:
+        raise ValueError("an option needs a value")
+    value = option.get("value")
+    if not isinstance(value, str):
+        raise TypeError(f"an option's value must be a str, not {type(value).__name__}")
+    if not value:
+        raise ValueError("an option's value must not be empty")
+    label = option.get("label")
+    if label is not None:
+        if not isinstance(label, str):
+            raise TypeError(
+                f"an option's label must be a str, not {type(label).__name__}"
+            )
+        if not label:
+            raise ValueError("an option's label must not be empty")
+    style = option.get("style")
+    if style is not None and style not in _STYLES:
+        raise ValueError(f"an option's style must be one of {sorted(_STYLES)}")
+    return option
+
+
+def _checked_input(input_spec: object) -> dict:
+    """
+    Check a reason's free-text field.
+
+    Args:
+        input_spec (object): The field the caller passed.
+
+    Returns:
+        dict: The field.
+
+    Raises:
+        TypeError: If it, or one of its values, is of the wrong type.
+        ValueError: If it carries an unknown key or an empty label.
+    """
+    if not isinstance(input_spec, dict):
+        raise TypeError(f"input must be a dict, not {type(input_spec).__name__}")
+    _refuse_unknown_keys(input_spec, _INPUT_KEYS, "input")
+    label = input_spec.get("label")
+    if label is not None:
+        if not isinstance(label, str):
+            raise TypeError(f"input's label must be a str, not {type(label).__name__}")
+        if not label:
+            raise ValueError("input's label must not be empty")
+    multiline = input_spec.get("multiline")
+    if multiline is not None and not isinstance(multiline, bool):
+        raise TypeError(
+            f"input's multiline must be a bool, not {type(multiline).__name__}"
+        )
+    return input_spec
+
+
+def _refuse_unknown_keys(value: dict, allowed: frozenset[str], subject: str) -> None:
+    """
+    Refuse keys the wire contract does not name.
+
+    A misspelled key is the mistake worth catching: Welt drops the whole
+    reason to its default rendering rather than ignoring the stray key.
+
+    Args:
+        value (dict): The dict the caller passed.
+        allowed (frozenset[str]): The keys the contract names.
+        subject (str): What the dict is, for the error message.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If the dict carries a key outside `allowed`.
+    """
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(
+            f"{subject} carries unknown key(s): {', '.join(unknown)}"
+            f" (known: {', '.join(sorted(allowed))})"
+        )
 
 
 async def renderable_events(
@@ -444,6 +518,10 @@ async def renderable_events(
     the wire unless it is listed. Files the model itself returns are its
     reply, and always go. A tool message names its tool, so nothing else
     has to be passed in.
+
+    Each event carries only what Welt reads, and an event with nothing to
+    render — a text chunk the model left empty, a file with no bytes — is
+    not sent at all.
 
     Args:
         stream (AsyncIterator): The `(mode, payload)` items of a LangGraph
@@ -542,7 +620,7 @@ def _assistant_events(message: AIMessage) -> list[dict]:
         for call in message.tool_calls
         if (event := _tool_use_event(call["name"], call["id"])) is not None
     )
-    events.extend(_file_events(message))
+    events.extend(_file_events(message, "the model"))
     return events
 
 
@@ -575,8 +653,9 @@ def _tool_events(
             }
         }
     ]
-    if files_from and message.name in files_from:
-        events.extend(_file_events(message))
+    name = message.name
+    if files_from and name is not None and name in files_from:
+        events.extend(_file_events(message, name))
     return events
 
 
@@ -588,7 +667,8 @@ def _data_events(message: BaseMessage) -> list[dict]:
         message (BaseMessage): An assistant message or token delta.
 
     Returns:
-        list[dict]: The `data` event, or nothing for an empty text.
+        list[dict]: The `data` event, or nothing for an empty text — a
+            chunk the model left empty carries nothing to render.
     """
     if not message.text:
         return []
@@ -613,13 +693,15 @@ def _tool_use_event(name: str | None, call_id: str | None) -> dict | None:
     return {"current_tool_use": {"name": name, "toolUseId": call_id}}
 
 
-def _file_events(message: BaseMessage) -> list[dict]:
+def _file_events(message: BaseMessage, origin: str) -> list[dict]:
     """
     Build `file` events from a message's file-carrying content blocks.
 
     Args:
         message (BaseMessage): A message whose `content_blocks` may carry
             image, file, video, or audio blocks with base64 data.
+        origin (str): What produced the message, for the log line an empty
+            file leaves behind.
 
     Returns:
         list[dict]: One `file` event per file-carrying block, named after
@@ -630,8 +712,17 @@ def _file_events(message: BaseMessage) -> list[dict]:
         kind = block.get("type")
         if not isinstance(kind, str) or kind not in ("image", "file", "video", "audio"):
             continue
+        # A block carries its file inline or points at it by url or id, and
+        # there is nothing to upload from a pointer.
         data = block.get("base64")
-        if not isinstance(data, str) or not data:
+        if not isinstance(data, str):
+            continue
+        if not data:
+            # Slack refuses a zero-byte upload, and the whole reply fails
+            # with it, so an empty file does not go on the wire.
+            logger.warning(
+                "Skipped an empty file from %s: %s", origin, _file_name(kind, block)
+            )
             continue
         events.append({"file": {"name": _file_name(kind, block), "bytes": data}})
     return events
@@ -808,12 +899,12 @@ def _hitl_reason(action_request: dict, name: str, allowed: list) -> dict | None:
         dict | None: The structured reason, or None when the allowed
             decisions leave no widget to render.
     """
-    options: list[dict] = []
+    options: list[OptionSpec] = []
     if "approve" in allowed:
         options.append({"value": _HITL_APPROVE, "label": "Approve", "style": "primary"})
     if "reject" in allowed:
         options.append({"value": _HITL_REJECT, "label": "Reject", "style": "danger"})
-    input_spec: dict | None = {} if "respond" in allowed else None
+    input_spec: InputSpec | None = {} if "respond" in allowed else None
     if not options and input_spec is None:
         return None
     description = action_request.get("description")
