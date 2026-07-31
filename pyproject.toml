@@ -20,10 +20,17 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # The reply stream carries LangChain's own message objects, which are
-    # read as those types rather than guessed at by attribute name. Anyone
-    # running a LangGraph agent already has this.
-    "langchain-core>=1.5.0",
+    # Not imported: this package reads what LangGraph's stream and
+    # interrupts look like, and builds what `Command(resume=...)` takes.
+    # Declared anyway, because the two are always run together and this is
+    # the only place the supported floor can be stated. 1.2.5 is the oldest
+    # version the test suite passes against.
+    "langgraph>=1.2.5",
+    # Imported directly: the reply stream carries LangChain's own message
+    # objects, which are read as those types rather than guessed at by
+    # attribute name. No floor of its own — LangGraph decides which version
+    # arrives, and it asks for a newer one than anything here needs.
+    "langchain-core",
 ]
 
 [project.urls]

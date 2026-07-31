@@ -1079,6 +1079,7 @@ name = "welt-io-langgraph"
 source = { editable = "." }
 dependencies = [
     { name = "langchain-core" },
+    { name = "langgraph" },
 ]
 
 [package.dev-dependencies]
@@ -1094,7 +1095,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "langchain-core", specifier = ">=1.5.0" }]
+requires-dist = [
+    { name = "langchain-core" },
+    { name = "langgraph", specifier = ">=1.2.5" },
+]
 
 [package.metadata.requires-dev]
 dev = [
