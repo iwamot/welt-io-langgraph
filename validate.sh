@@ -18,6 +18,26 @@ if [[ -n "$CI" ]]; then
 else
   uv run pytest --cov --cov-report=term
 fi
+# README's Supported Versions table restates what pyproject.toml declares. Read
+# both and compare, so an edit to one cannot leave the other behind.
+uv run python - <<'PY'
+import tomllib
+
+from packaging.requirements import Requirement
+
+with open("README.md", encoding="utf-8") as f:
+    readme = f.read()
+with open("pyproject.toml", "rb") as f:
+    deps = tomllib.load(f)["project"]["dependencies"]
+for dep in deps:
+    req = Requirement(dep)
+    spec = f"`{req.specifier}`" if req.specifier else "any"
+    row = f"| `{req.name}` | {spec} |"
+    if row not in readme:
+        raise SystemExit(f"validate.sh: README.md has no row {row}")
+    print(f"validate.sh: README.md states {req.name} {req.specifier or 'any'}")
+PY
+
 trap 'rm -rf dist' EXIT
 rm -rf dist
 uv build
