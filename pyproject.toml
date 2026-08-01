@@ -53,6 +53,9 @@ dev = [
     # pull in.
     "langchain-core==1.5.3",
     "langgraph==1.2.10",
+    # compatibility.sh reads the declared floors with it. Pinned even though it
+    # arrives through pytest, so CI names the version it uses.
+    "packaging==26.2",
     "pip-licenses==5.5.5",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
