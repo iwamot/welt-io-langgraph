@@ -15,9 +15,26 @@ uv add welt-io-langgraph
 
 See [`examples/agent`](examples/agent) — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools). The sections below explain the adapters it wires in.
 
+## Supported Versions
+
+### Welt
+
+Welt releases first; welt-io-langgraph follows, mirroring the minor version. While both are 0.x, a welt-io-langgraph 0.Y release supports Welt v0.Y — other combinations may work, but come with no guarantee.
+
+### LangGraph
+
+| Package | Installable | Version CI runs against |
+|---|---|---|
+| `langgraph` | `>=1.2.5` | <!-- renovate: datasource=pypi depName=langgraph --> `1.2.10` |
+| `langchain-core` | any | <!-- renovate: datasource=pypi depName=langchain-core --> `1.5.3` |
+
+Every push and pull request runs the suite at both ends of that range. That is best effort rather than a guarantee: the floor is where the suite was last seen to pass, so a later release may raise it, and no ceiling is declared at all. `langchain-core` carries no floor of its own because LangGraph asks for a newer one than anything here needs.
+
+Something misbehaving inside that range is worth an [issue](https://github.com/iwamot/welt-io-langgraph/issues).
+
 ## API
 
-The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain LangGraph values do not fit it in either direction. Two functions adapt the inbound payload, two the outbound stream. The adapters target LangGraph 1.x and LangChain 1.x, whose messages carry [standard content blocks](https://docs.langchain.com/oss/python/langchain/messages).
+The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain LangGraph values do not fit it in either direction. Two functions adapt the inbound payload, two the outbound stream. The messages they read are LangChain's, which carry [standard content blocks](https://docs.langchain.com/oss/python/langchain/messages).
 
 ### Inbound
 
@@ -151,10 +168,6 @@ The decisions an action allows become its widgets, and the answer comes back as 
 - **`edit` has no widget**, rewriting an action's arguments being a form the wire has no shape for. An action allowing `edit` alongside others is asked about with the widgets for the rest; one allowing `edit` alone is passed through to Welt's fallback rendering, whose answers the middleware cannot resume from.
 - **One request becomes one question per action.** The middleware bundles every gated call of a turn into a single interrupt and resumes from one decision per action; a Welt stop carries as many questions as it likes, so each action is asked about on its own — buttons per action, answered in any order, and Welt resumes the run once all of them are answered.
 - **Write the interrupt yourself when the question depends on the tool's own work.** The middleware knows a call's name and arguments, nothing the tool computes, so showing something the tool produced — a draft, a diff, a dry run — needs `interrupt` inside the tool, as `sample_draft_report` does.
-
-## Supported Versions
-
-Welt releases first; welt-io-langgraph follows, mirroring the minor version. While both are 0.x, a welt-io-langgraph 0.Y release supports Welt v0.Y — other combinations may work, but come with no guarantee.
 
 ## License
 
