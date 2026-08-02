@@ -134,11 +134,11 @@ Building the reason through this helper is what makes a typo an error. `interrup
 - **`interrupt` needs a checkpointer**, even though the conversation history lives in Slack — pausing and resuming run through checkpoints. An in-memory checkpointer works on AgentCore Runtime, where each session keeps its own microVM.
 - **Start each conversation turn on a fresh thread.** Welt sends the whole Slack thread every turn by default, so letting the checkpointer stack turns into its own history would double the conversation. Resume alone reuses the interrupted thread's config. (An agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side.)
 - **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default **Approve** / **Deny** buttons, whose answers arrive as `y` / `n`.
-- **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/durable-execution): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.
+- **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/functional-api#task): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.
 
 ## Gating tools with `HumanInTheLoopMiddleware`
 
-LangChain's [`HumanInTheLoopMiddleware`](https://docs.langchain.com/oss/python/langchain/middleware#human-in-the-loop) pauses a tool before it runs, named in `interrupt_on` rather than written into the tool — which is what lets a tool the agent did not write, from a library or an MCP server, be gated at all. It works over Welt as-is:
+LangChain's [`HumanInTheLoopMiddleware`](https://docs.langchain.com/oss/python/langchain/middleware/built-in#human-in-the-loop) pauses a tool before it runs, named in `interrupt_on` rather than written into the tool — which is what lets a tool the agent did not write, from a library or an MCP server, be gated at all. It works over Welt as-is:
 
 ```python
 create_agent(
