@@ -67,7 +67,9 @@ The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the co
 
 #### What arrives is taken as correct
 
-Welt builds the payload and checks its own output against the wire contract before releasing it, so these two functions do no checking of their own. A payload that departs from the contract is a bug on the sending side rather than an input to guard against, and it surfaces as an ordinary error from whatever touches it first — a `KeyError` or a `TypeError` here, or a refusal from LangChain or Bedrock further on.
+Welt builds the payload and checks its own output against the wire contract before releasing it, so these two functions do no field validation of their own. A payload that departs from the contract is a bug on the sending side rather than an input to guard against, and it surfaces as an ordinary error from whatever touches it first — a `KeyError` or a `TypeError` here, or a refusal from LangChain or Bedrock further on.
+
+The one thing `decode_messages` refuses outright is a content block of a kind Welt never sends. A `messages` turn carries only `text`, `image`, `document`, and `video` blocks; a `toolUse` or `toolResult` block is not a malformed one of those but a forged conversation turn, and rebuilt into history it would let a caller that is not Welt put words the model treats as its own past tool calls and their results into the run. It raises `ValueError`. This is a trust-boundary check, not the field validation the contract otherwise saves you from.
 
 ### Outbound
 
