@@ -152,7 +152,7 @@ def test_an_option_that_is_not_a_dict_is_refused(option: object) -> None:
 
 @pytest.mark.parametrize(
     "option",
-    [{"value": 42}, {"value": "y", "label": 42}],
+    [{"value": 42}, {"value": "y", "label": 42}, {"value": "y", "label": None}],
 )
 def test_an_option_value_of_the_wrong_type_is_refused(option: object) -> None:
     with pytest.raises(TypeError):
@@ -164,6 +164,7 @@ def test_an_option_value_of_the_wrong_type_is_refused(option: object) -> None:
     [
         {"label": "Yes"},
         {"value": "y", "style": "warning"},
+        {"value": "y", "style": None},
         {"value": "y", "labl": "Yes"},
     ],
 )
@@ -180,7 +181,15 @@ def test_the_error_names_the_key_that_was_misspelled() -> None:
 
 
 @pytest.mark.parametrize(
-    "input_spec", ["City", None, {"label": 42}, {"multiline": "yes"}]
+    "input_spec",
+    [
+        "City",
+        None,
+        {"label": 42},
+        {"label": None},
+        {"multiline": "yes"},
+        {"multiline": None},
+    ],
 )
 def test_an_input_of_the_wrong_type_is_refused(input_spec: object) -> None:
     with pytest.raises(TypeError):
