@@ -442,16 +442,18 @@ def _checked_option(option: object) -> dict:
         raise TypeError(f"an option's value must be a str, not {type(value).__name__}")
     if not value:
         raise ValueError("an option's value must not be empty")
-    label = option.get("label")
-    if label is not None:
+    # Read by presence, the way `value` above is: a key carrying None
+    # reaches Welt as a null, which Welt reads as a malformed field rather
+    # than an omitted one and answers with its default buttons instead.
+    if "label" in option:
+        label = option.get("label")
         if not isinstance(label, str):
             raise TypeError(
                 f"an option's label must be a str, not {type(label).__name__}"
             )
         if not label:
             raise ValueError("an option's label must not be empty")
-    style = option.get("style")
-    if style is not None and style not in _STYLES:
+    if "style" in option and option.get("style") not in _STYLES:
         raise ValueError(f"an option's style must be one of {sorted(_STYLES)}")
     return option
 
@@ -473,17 +475,18 @@ def _checked_input(input_spec: object) -> dict:
     if not isinstance(input_spec, dict):
         raise TypeError(f"input must be a dict, not {type(input_spec).__name__}")
     _refuse_unknown_keys(input_spec, _INPUT_KEYS, "input")
-    label = input_spec.get("label")
-    if label is not None:
+    if "label" in input_spec:
+        label = input_spec.get("label")
         if not isinstance(label, str):
             raise TypeError(f"input's label must be a str, not {type(label).__name__}")
         if not label:
             raise ValueError("input's label must not be empty")
-    multiline = input_spec.get("multiline")
-    if multiline is not None and not isinstance(multiline, bool):
-        raise TypeError(
-            f"input's multiline must be a bool, not {type(multiline).__name__}"
-        )
+    if "multiline" in input_spec:
+        multiline = input_spec.get("multiline")
+        if not isinstance(multiline, bool):
+            raise TypeError(
+                f"input's multiline must be a bool, not {type(multiline).__name__}"
+            )
     return input_spec
 
 
