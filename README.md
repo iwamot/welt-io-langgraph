@@ -112,15 +112,15 @@ Each event carries only what Welt reads, and an event with nothing to render —
 
 #### `interrupt_reason(message, options=..., input=...)`
 
-Builds the structured reason Welt renders as a message with the specified widgets — choice buttons (`options`), a free-text field (`input`), or both. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt), typed as `OptionSpec` and `InputSpec`, and omitted fields keep Welt's defaults:
+Builds the structured reason Welt renders as a message with the specified widgets — choice buttons (`options`), a free-text field (`input`), or both. An option's `value` is any JSON value, and the pressed button answers with it as it was declared; with neither widget the message renders as itself and Welt's default **Approve** / **Deny** buttons answer it. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt), typed as `OptionSpec` and `InputSpec`, and omitted fields keep Welt's defaults:
 
 ```python
 answer = interrupt(
     interrupt_reason(
         "Deploy to prod?",
         [
-            {"value": "y", "label": "Deploy", "style": "primary"},
-            {"value": "n", "label": "Cancel"},
+            {"value": "Deploy", "style": "primary"},
+            {"value": "Cancel"},
         ],
         input={"label": "Or type your answer"},
     )

@@ -54,6 +54,21 @@ def test_styled_and_unstyled_options_mix() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "value", [True, False, None, 42, "", ["a"], {"decision": "hold"}]
+)
+def test_option_value_is_any_json_value(value: object) -> None:
+    reason = interrupt_reason("Sure?", [{"value": value, "label": "Pick"}])
+
+    assert reason["options"] == [{"value": value, "label": "Pick"}]
+
+
+def test_message_alone_leaves_the_answering_to_welts_default_buttons() -> None:
+    reason = interrupt_reason("Generating an image. OK?")
+
+    assert reason == {"message": "Generating an image. OK?"}
+
+
 def test_input_builds_message_and_input() -> None:
     reason = interrupt_reason("Which city should I check?", input={"label": "City"})
 
@@ -99,9 +114,7 @@ def test_options_and_input_carry_both() -> None:
     [
         (("", [{"value": "y"}]), {}),
         (("Sure?", []), {}),
-        (("Sure?", [{"value": ""}]), {}),
         (("Sure?", [{"value": "y", "label": ""}]), {}),
-        (("Sure?",), {}),
         (("",), {"input": {}}),
         (("Sure?",), {"input": {"label": ""}}),
         (("Sure?", []), {"input": {}}),
@@ -152,9 +165,9 @@ def test_an_option_that_is_not_a_dict_is_refused(option: object) -> None:
 
 @pytest.mark.parametrize(
     "option",
-    [{"value": 42}, {"value": "y", "label": 42}, {"value": "y", "label": None}],
+    [{"value": "y", "label": 42}, {"value": "y", "label": None}],
 )
-def test_an_option_value_of_the_wrong_type_is_refused(option: object) -> None:
+def test_an_option_label_of_the_wrong_type_is_refused(option: object) -> None:
     with pytest.raises(TypeError):
         _checked_option(option)
 

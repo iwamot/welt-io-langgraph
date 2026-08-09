@@ -168,13 +168,13 @@ def sample_draft_report(topic: str) -> str | list[dict]:
         interrupt_reason(
             f"May I publish this draft?\n\n```\n{draft}```",
             [
-                {"value": "y", "label": "Publish", "style": "primary"},
-                {"value": "n", "label": "Discard"},
+                {"value": "Publish", "style": "primary"},
+                {"value": "Discard"},
             ],
             input={"label": "Or type your answer"},
         )
     )
-    if answer == "y":
+    if answer == "Publish":
         name = _document_name("report")
         return [
             {
@@ -193,7 +193,7 @@ def sample_draft_report(topic: str) -> str | list[dict]:
                 "base64": b64encode(draft.encode()).decode("ascii"),
             },
         ]
-    if answer == "n":
+    if answer == "Discard":
         return "The user discarded the draft; nothing was published."
     return f"The draft was not published. The user answered: {answer}"
 
