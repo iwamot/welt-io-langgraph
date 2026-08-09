@@ -53,7 +53,7 @@ Each file-carrying block gets the media type LangChain models expect in place of
 
 #### `decode_interrupt_responses(responses)`
 
-Turns Welt's resume payload — a mapping of interrupt id to the answer a human chose — into the mapping `Command(resume=...)` takes, answering every pending interrupt at once:
+Turns Welt's resume payload — a mapping of interrupt id to the answer a human chose and the widget it came from — into the mapping `Command(resume=...)` takes, answering every pending interrupt at once. A plain interrupt resumes with the answer as the value it was given:
 
 ```python
 agent.astream(
@@ -135,7 +135,7 @@ Building the reason through this helper is what makes a typo an error. `interrup
 
 - **`interrupt` needs a checkpointer**, even though the conversation history lives in Slack — pausing and resuming run through checkpoints. An in-memory checkpointer works on AgentCore Runtime, where each session keeps its own microVM.
 - **Start each conversation turn on a fresh thread.** Welt sends the whole Slack thread every turn by default, so letting the checkpointer stack turns into its own history would double the conversation. Resume alone reuses the interrupted thread's config. (An agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side.)
-- **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default **Approve** / **Deny** buttons, whose answers arrive as `y` / `n`.
+- **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default **Approve** / **Deny** buttons, whose answers arrive as `True` / `False`.
 - **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/functional-api#task): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.
 
 ## Gating tools with `HumanInTheLoopMiddleware`
@@ -166,7 +166,7 @@ The decisions an action allows become its widgets, and the answer comes back as 
 | `respond` | A free-text field | The tool does not run; the typed text reaches the model as the tool's result |
 | `edit` | Nothing | — |
 
-- **A press is identified by the value it carries.** The buttons carry values the adapter mints, so a press maps to the decision its button stands for and every other answer travels on as text — a typed "approve" included, since the wire says which question was answered but not which widget answered it. What such an answer means is read where meaning belongs: it reaches the model as the tool's answer.
+- **A press is identified by the widget it came from.** Welt says which widget produced each answer, so a press maps to the decision its button stands for and submitted text becomes the `respond` decision — a typed "approve" included, since what it means is read where meaning belongs: it reaches the model as the tool's answer.
 - **`edit` has no widget**, rewriting an action's arguments being a form the wire has no shape for. An action allowing `edit` alongside others is asked about with the widgets for the rest; one allowing `edit` alone is passed through to Welt's fallback rendering, whose answers the middleware cannot resume from.
 - **One request becomes one question per action.** The middleware bundles every gated call of a turn into a single interrupt and resumes from one decision per action; a Welt stop carries as many questions as it likes, so each action is asked about on its own — buttons per action, answered in any order, and Welt resumes the run once all of them are answered.
 - **Write the interrupt yourself when the question depends on the tool's own work.** The middleware knows a call's name and arguments, nothing the tool computes, so showing something the tool produced — a draft, a diff, a dry run — needs `interrupt` inside the tool, as `sample_draft_report` does.

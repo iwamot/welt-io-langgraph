@@ -180,16 +180,20 @@ def _decoded_block(block: dict) -> dict:
     }
 
 
-# The separator that splits one `HumanInTheLoopMiddleware` request into a
-# question per reviewed action, and the button values of the questions it
-# splits into. The values are namespaced rather than the bare decision
-# names because Welt hands back one string per question without saying
-# which widget produced it: only a value the adapter minted identifies a
-# press, which leaves every other string — including a typed "approve" —
-# to travel on as text the agent interprets.
-_HITL_ID_SEPARATOR = "#"
-_HITL_APPROVE = "welt-io:hitl:approve"
-_HITL_REJECT = "welt-io:hitl:reject"
+# How one `HumanInTheLoopMiddleware` request is split into a question per
+# reviewed action, and the button values of the questions it splits into.
+# The id prefix is namespaced because the split has to be recognized on
+# the way back with nothing but the id to go on: an id LangGraph minted
+# never starts with this, and neither does one a graph author would write
+# by hand. The button values are the decision names themselves — a press
+# and a typed answer are told apart by the widget Welt names, not by the
+# value.
+_HITL_ID_PREFIX = "welt-io:hitl:"
+_HITL_APPROVE = "approve"
+_HITL_REJECT = "reject"
+
+# The widget names Welt's resume payload uses.
+_OPTION_SOURCE = "option"
 
 
 def decode_interrupt_responses(responses: dict) -> dict:
@@ -197,17 +201,18 @@ def decode_interrupt_responses(responses: dict) -> dict:
     Decode Welt's interrupt answers into LangGraph's resume input.
 
     Welt resumes an interrupted run with a payload mapping each interrupt
-    id to the answer a human chose in the thread. LangGraph resumes from
-    the same mapping — the returned dict feeds `Command(resume=...)`
-    directly, answering every pending interrupt at once.
+    id to the answer a human chose in the thread and the widget it came
+    from. LangGraph resumes from the answers alone — the returned dict
+    feeds `Command(resume=...)` directly, answering every pending
+    interrupt at once.
 
     The answers to a `HumanInTheLoopMiddleware` request arrive under the
     per-action ids `renderable_events` split it into, and are rejoined
     into the single `{"decisions": [...]}` the middleware resumes from, in
-    action order. A pressed button is recognized by the value the adapter
-    minted for it; every other answer travels on as the `respond`
-    decision's message with its text untouched, since what a typed answer
-    means is for the agent to decide.
+    action order. There the widget decides: a pressed button is one of the
+    two decisions the question offered, and a submitted text field is the
+    `respond` decision, carrying what was typed untouched — since what a
+    typed answer means is for the agent to decide.
 
     Args:
         responses (dict): The `interrupt_responses` value of Welt's
@@ -217,11 +222,11 @@ def decode_interrupt_responses(responses: dict) -> dict:
         dict: The interrupt id to answer mapping for `Command(resume=...)`.
     """
     decoded: dict = {}
-    answers_by_request: dict[str, dict[int, str]] = {}
+    answers_by_request: dict[str, dict[int, dict]] = {}
     for interrupt_id, answer in responses.items():
         split = _split_hitl_id(interrupt_id)
         if split is None:
-            decoded[interrupt_id] = answer
+            decoded[interrupt_id] = answer["value"]
             continue
         request_id, index = split
         if request_id not in answers_by_request:
@@ -240,10 +245,10 @@ def _split_hitl_id(interrupt_id: str) -> tuple[str, int] | None:
     Split a per-action interrupt id into its request id and action index.
 
     The ids `renderable_events` mints for the actions of one
-    `HumanInTheLoopMiddleware` request carry the action's index after the
-    LangGraph interrupt id (`<id>#0`). LangGraph's own ids are hex
-    digests, so an id carrying the separator and a decimal tail is one of
-    the adapter's own rather than a plain interrupt's.
+    `HumanInTheLoopMiddleware` request carry the adapter's prefix and the
+    action's index ahead of the LangGraph interrupt id
+    (`welt-io:hitl:0:<id>`), which is what tells them from the id of a
+    plain interrupt on the way back.
 
     Args:
         interrupt_id (str): An interrupt id from Welt's resume payload.
@@ -252,7 +257,9 @@ def _split_hitl_id(interrupt_id: str) -> tuple[str, int] | None:
         tuple[str, int] | None: The request id and the action index, or
             None when the id belongs to a plain interrupt.
     """
-    request_id, separator, index = interrupt_id.rpartition(_HITL_ID_SEPARATOR)
+    if not interrupt_id.startswith(_HITL_ID_PREFIX):
+        return None
+    index, separator, request_id = interrupt_id[len(_HITL_ID_PREFIX) :].partition(":")
     if not separator or not request_id:
         return None
     if not index.isascii() or not index.isdecimal():
@@ -260,7 +267,7 @@ def _split_hitl_id(interrupt_id: str) -> tuple[str, int] | None:
     return request_id, int(index)
 
 
-def _hitl_decisions(answers: dict[int, str]) -> list[dict]:
+def _hitl_decisions(answers: dict[int, dict]) -> list[dict]:
     """
     Rejoin one request's per-action answers into its decisions.
 
@@ -270,7 +277,7 @@ def _hitl_decisions(answers: dict[int, str]) -> list[dict]:
     question belongs, rather than here.
 
     Args:
-        answers (dict[int, str]): One request's answers, by action index.
+        answers (dict[int, dict]): One request's answers, by action index.
 
     Returns:
         list[dict]: The decisions, in action index order.
@@ -278,23 +285,31 @@ def _hitl_decisions(answers: dict[int, str]) -> list[dict]:
     return [_hitl_decision(answers[index]) for index in sorted(answers)]
 
 
-def _hitl_decision(answer: str) -> dict:
+def _hitl_decision(answer: dict) -> dict:
     """
     Map one answer to the decision it stands for.
 
+    A question the adapter built offers `approve` and `reject` as its two
+    buttons and the human's own words as its text field, so the widget
+    Welt names settles which decision was made. A pressed button that
+    carries neither decision came from no question this adapter built, and
+    rejecting is the direction that does not act on an answer nobody can
+    read.
+
     Args:
-        answer (str): One action's answer, as Welt sent it.
+        answer (dict): One action's answer, as Welt sent it: the `value`
+            chosen and the `source` it came from.
 
     Returns:
-        dict: The `approve` or `reject` decision the pressed button
-            stands for, or the `respond` decision carrying the answer as
-            its message.
+        dict: The `approve` or `reject` decision the pressed button stands
+            for, or the `respond` decision carrying the typed text as its
+            message.
     """
-    if answer == _HITL_APPROVE:
+    if answer["source"] != _OPTION_SOURCE:
+        return {"type": "respond", "message": answer["value"]}
+    if answer["value"] == _HITL_APPROVE:
         return {"type": "approve"}
-    if answer == _HITL_REJECT:
-        return {"type": "reject"}
-    return {"type": "respond", "message": answer}
+    return {"type": "reject"}
 
 
 class OptionSpec(TypedDict):
@@ -885,7 +900,7 @@ def _hitl_events(interrupt_id: str, value: object) -> list[dict] | None:
         events.append(
             {
                 "interrupt": {
-                    "id": f"{interrupt_id}{_HITL_ID_SEPARATOR}{index}",
+                    "id": f"{_HITL_ID_PREFIX}{index}:{interrupt_id}",
                     "name": name,
                     "reason": reason,
                 }
