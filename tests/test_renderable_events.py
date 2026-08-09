@@ -446,18 +446,18 @@ def test_hitl_request_becomes_a_question_for_its_action() -> None:
     assert rendered(items) == [
         {
             "interrupt": {
-                "id": "i-1#0",
+                "id": "welt-io:hitl:0:i-1",
                 "name": "send_email",
                 "reason": {
                     "message": "Tool execution requires approval\n\nTool: send_email",
                     "options": [
                         {
-                            "value": "welt-io:hitl:approve",
+                            "value": "approve",
                             "label": "Approve",
                             "style": "primary",
                         },
                         {
-                            "value": "welt-io:hitl:reject",
+                            "value": "reject",
                             "label": "Reject",
                             "style": "danger",
                         },
@@ -484,18 +484,18 @@ def test_hitl_request_splits_into_one_question_per_action() -> None:
     assert rendered(items) == [
         {
             "interrupt": {
-                "id": "i-1#0",
+                "id": "welt-io:hitl:0:i-1",
                 "name": "send_email",
                 "reason": {
                     "message": "Send it?",
                     "options": [
                         {
-                            "value": "welt-io:hitl:approve",
+                            "value": "approve",
                             "label": "Approve",
                             "style": "primary",
                         },
                         {
-                            "value": "welt-io:hitl:reject",
+                            "value": "reject",
                             "label": "Reject",
                             "style": "danger",
                         },
@@ -505,7 +505,7 @@ def test_hitl_request_splits_into_one_question_per_action() -> None:
         },
         {
             "interrupt": {
-                "id": "i-1#1",
+                "id": "welt-io:hitl:1:i-1",
                 "name": "ask_expert",
                 "reason": {"message": "Answer for it?", "input": {}},
             }

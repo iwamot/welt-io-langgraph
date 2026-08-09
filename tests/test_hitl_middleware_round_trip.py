@@ -69,7 +69,11 @@ def asked(thread_id: str) -> list[dict]:
     return asyncio.run(turn())
 
 
-def answered(thread_id: str, answers: dict[str, str]) -> list:
+def _pressed(value: object) -> dict:
+    return {"value": value, "source": "option"}
+
+
+def answered(thread_id: str, answers: dict[str, dict]) -> list:
     """Answer a stopped turn and return the messages it settles on.
 
     The answers are the strings Welt sends, by question id: the value of a
@@ -99,11 +103,12 @@ def test_one_request_becomes_one_question_per_gated_call() -> None:
     questions = asked("per-call")
 
     assert [question["name"] for question in questions] == ["send_email", "delete_file"]
-    # One request bundles both calls, so both questions carry its id, each
-    # with the index of the action it asks about.
-    request_ids = {question["id"].rsplit("#", 1)[0] for question in questions}
-    assert len(request_ids) == 1
-    assert [question["id"].rsplit("#", 1)[1] for question in questions] == ["0", "1"]
+    # One request bundles both calls, so both questions carry its id under
+    # the adapter's prefix, each with the index of the action it asks about.
+    marks = [question["id"].removeprefix("welt-io:hitl:") for question in questions]
+    indexes, request_ids = zip(*(mark.split(":", 1) for mark in marks))
+    assert list(indexes) == ["0", "1"]
+    assert len(set(request_ids)) == 1
 
 
 def test_each_question_offers_only_what_its_action_allows() -> None:
@@ -120,8 +125,8 @@ def test_each_question_offers_only_what_its_action_allows() -> None:
 def test_a_pressed_reject_stops_the_call_it_was_asked_about() -> None:
     send_email, delete_file = asked("reject")
     answers = {
-        send_email["id"]: send_email["reason"]["options"][0]["value"],
-        delete_file["id"]: delete_file["reason"]["options"][1]["value"],
+        send_email["id"]: _pressed(send_email["reason"]["options"][0]["value"]),
+        delete_file["id"]: _pressed(delete_file["reason"]["options"][1]["value"]),
     }
 
     messages = answered("reject", answers)
@@ -136,15 +141,16 @@ def test_a_pressed_reject_stops_the_call_it_was_asked_about() -> None:
 def test_a_typed_answer_reaches_the_model_as_the_tool_s_answer() -> None:
     send_email, delete_file = asked("typed")
     answers = {
-        send_email["id"]: "approve",
-        delete_file["id"]: delete_file["reason"]["options"][1]["value"],
+        send_email["id"]: {"value": "approve", "source": "input"},
+        delete_file["id"]: _pressed(delete_file["reason"]["options"][1]["value"]),
     }
 
     messages = answered("typed", answers)
 
-    # Carrying no button's value, the typed word travels on as text — the
-    # word matching a button's label decides nothing here, and the model
-    # reads the answer as the tool's own.
+    # Typed rather than pressed, the word travels on as text — a word
+    # matching a button's value decides nothing here, since the widget it
+    # came from is what says which decision was made, and the model reads
+    # the answer as the tool's own.
     answer = messages[1]
     assert (answer.tool_call_id, answer.status, answer.content) == (
         "call-1",
