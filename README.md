@@ -2,6 +2,7 @@
 
 [![pypi](https://img.shields.io/pypi/v/welt-io-langgraph.svg)](https://pypi.org/project/welt-io-langgraph/)
 [![python](https://img.shields.io/pypi/pyversions/welt-io-langgraph.svg)](https://pypi.org/project/welt-io-langgraph/)
+[![langgraph](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fwelt-io-langgraph%2Fjson&search=langgraph%28%3E%3D%5B%5Cd.%5D%2B%29&replace=%241&label=langgraph)](https://pypi.org/project/langgraph/)
 
 The [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) (Python) adapter for [Welt](https://github.com/iwamot/welt)'s wire contract.
 
@@ -23,12 +24,9 @@ While both are 0.x, a welt-io-langgraph 0.Y release supports Welt v0.Y. From 1.0
 
 ### LangGraph
 
-| Package | Installable | Version CI runs against |
-|---|---|---|
-| `langgraph` | `>=1.2.5` | <!-- renovate: datasource=pypi depName=langgraph --> `1.2.10` |
-| `langchain-core` | any | <!-- renovate: datasource=pypi depName=langchain-core --> `1.5.3` |
+The badge at the top states the range this release installs against. Every push and pull request runs the suite at both ends of it: the declared floor, and the newest release CI has picked up. That is best effort rather than a guarantee — the floor is where the suite was last seen to pass, so a later release may raise it, and no ceiling is declared at all. `langchain-core` comes along as a dependency and carries no floor of its own, because LangGraph asks for a newer one than anything here needs.
 
-Every push and pull request runs the suite at both ends of that range. That is best effort rather than a guarantee: the floor is where the suite was last seen to pass, so a later release may raise it, and no ceiling is declared at all. `langchain-core` carries no floor of its own because LangGraph asks for a newer one than anything here needs.
+The badge follows the current release. For the range an older release declared, read that release's own metadata on PyPI.
 
 Something misbehaving inside that range is worth an [issue](https://github.com/iwamot/welt-io-langgraph/issues).
 
