@@ -1098,7 +1098,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "langchain-core" },
-    { name = "langgraph", specifier = ">=1.2.5" },
+    { name = "langgraph", specifier = ">=1.2.11" },
 ]
 
 [package.metadata.requires-dev]
