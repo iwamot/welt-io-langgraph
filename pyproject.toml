@@ -23,9 +23,11 @@ dependencies = [
     # Not imported: this package reads what LangGraph's stream and
     # interrupts look like, and builds what `Command(resume=...)` takes.
     # Declared anyway, because the two are always run together and this is
-    # the only place the supported floor can be stated. 1.2.5 is the oldest
-    # version the test suite passes against.
-    "langgraph>=1.2.5",
+    # the only place the supported floor can be stated. 1.2.11 is the oldest
+    # version the test suite passes against: the human-approval test drives
+    # LangChain's own middleware, and LangChain reads `TracePolicy` from
+    # `langgraph.types`, which arrived there in 1.2.11.
+    "langgraph>=1.2.11",
     # Imported directly: the reply stream carries LangChain's own message
     # objects, which are read as those types rather than guessed at by
     # attribute name. No floor of its own — LangGraph decides which version
