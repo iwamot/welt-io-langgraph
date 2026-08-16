@@ -12,6 +12,7 @@ This example is a standalone deployable; Welt drives it only through the
 JSON wire contract, which welt-io-langgraph adapts in both directions.
 """
 
+import json
 import os
 from base64 import b64encode
 from collections.abc import AsyncIterator
@@ -21,11 +22,14 @@ from uuid import uuid4
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
+from langchain.agents.middleware.types import AgentState
 from langchain.tools import tool
 from langchain_aws import ChatBedrockConverse
+from langchain_core.messages import ToolCall
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import task
+from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 
 from welt_io_langgraph import (
@@ -120,6 +124,30 @@ def sample_dangerous_action(action: str) -> str:
         str: The outcome of the action.
     """
     return f"Ran: {action}. (This example doesn't actually run anything.)"
+
+
+def _approval_description(
+    tool_call: ToolCall, state: AgentState, runtime: Runtime
+) -> str:
+    """
+    Write the body of the question the middleware asks about one call.
+
+    Without this the middleware writes its own — the tool's name and its
+    arguments as Python renders a dict — since it knows nothing about
+    Slack. The question is the human's whole view of what they are
+    approving, so it is worth writing: the arguments as JSON in a code
+    block read the way the rest of the thread does.
+
+    Args:
+        tool_call (ToolCall): The call awaiting approval.
+        state (AgentState): The agent state, unused here.
+        runtime (Runtime): The runtime, unused here.
+
+    Returns:
+        str: The markdown Welt shows above the widgets.
+    """
+    arguments = json.dumps(tool_call["args"], indent=2, ensure_ascii=False)
+    return f"May I run `{tool_call['name']}`?\n```\n{arguments}\n```"
 
 
 @task
@@ -225,7 +253,8 @@ agent = create_agent(
         HumanInTheLoopMiddleware(
             interrupt_on={
                 "sample_dangerous_action": InterruptOnConfig(
-                    allowed_decisions=["approve", "reject", "respond"]
+                    allowed_decisions=["approve", "reject", "respond"],
+                    description=_approval_description,
                 )
             }
         )

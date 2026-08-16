@@ -3,6 +3,7 @@ from typing import Literal
 import pytest
 
 from welt_io_langgraph import (
+    _checked_decision,
     _checked_input,
     _checked_message,
     _checked_option,
@@ -212,3 +213,57 @@ def test_an_input_of_the_wrong_type_is_refused(input_spec: object) -> None:
 def test_an_input_key_welt_does_not_know_is_refused() -> None:
     with pytest.raises(ValueError):
         _checked_input({"placeholder": "Type here"})
+
+
+def test_approve_and_reject_leave_their_wording_to_welt() -> None:
+    reason = interrupt_reason("Deploy to prod?", approve={}, reject={})
+
+    assert reason == {"message": "Deploy to prod?", "approve": {}, "reject": {}}
+
+
+def test_approve_and_reject_carry_a_label_and_a_style() -> None:
+    reason = interrupt_reason(
+        "Deploy to prod?",
+        approve={"label": "Deploy"},
+        reject={"label": "Cancel", "style": "primary"},
+    )
+
+    assert reason["approve"] == {"label": "Deploy"}
+    assert reason["reject"] == {"label": "Cancel", "style": "primary"}
+
+
+def test_decisions_combine_with_options_and_input() -> None:
+    reason = interrupt_reason(
+        "Deploy to prod?",
+        [{"value": "later", "label": "Ask me later"}],
+        approve={},
+        input={"label": "Or say why"},
+    )
+
+    assert reason == {
+        "message": "Deploy to prod?",
+        "approve": {},
+        "options": [{"value": "later", "label": "Ask me later"}],
+        "input": {"label": "Or say why"},
+    }
+
+
+@pytest.mark.parametrize("spec", ["yes", None, {"label": 42}, {"label": None}])
+def test_a_decision_of_the_wrong_type_is_refused(spec: object) -> None:
+    with pytest.raises(TypeError):
+        _checked_decision(spec, "approve")
+
+
+@pytest.mark.parametrize(
+    "spec", [{"label": ""}, {"style": "default"}, {"style": None}, {"value": True}]
+)
+def test_a_decision_welt_would_not_render_is_refused(spec: object) -> None:
+    with pytest.raises(ValueError):
+        _checked_decision(spec, "approve")
+
+
+def test_the_decision_error_names_the_argument() -> None:
+    with pytest.raises(ValueError) as caught:
+        _checked_decision({"label": ""}, "reject")
+
+    assert "reject" in str(caught.value)

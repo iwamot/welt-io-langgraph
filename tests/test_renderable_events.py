@@ -450,18 +450,8 @@ def test_hitl_request_becomes_a_question_for_its_action() -> None:
                 "name": "send_email",
                 "reason": {
                     "message": "Tool execution requires approval\n\nTool: send_email",
-                    "options": [
-                        {
-                            "value": "approve",
-                            "label": "Approve",
-                            "style": "primary",
-                        },
-                        {
-                            "value": "reject",
-                            "label": "Reject",
-                            "style": "danger",
-                        },
-                    ],
+                    "approve": {},
+                    "reject": {},
                     "input": {},
                 },
             }
@@ -488,18 +478,8 @@ def test_hitl_request_splits_into_one_question_per_action() -> None:
                 "name": "send_email",
                 "reason": {
                     "message": "Send it?",
-                    "options": [
-                        {
-                            "value": "approve",
-                            "label": "Approve",
-                            "style": "primary",
-                        },
-                        {
-                            "value": "reject",
-                            "label": "Reject",
-                            "style": "danger",
-                        },
-                    ],
+                    "approve": {},
+                    "reject": {},
                 },
             }
         },
@@ -612,5 +592,6 @@ def test_hitl_action_allowing_edit_is_asked_with_the_rest_of_its_widgets() -> No
 
     reason = rendered(items)[0]["interrupt"]["reason"]
 
-    assert [option["label"] for option in reason["options"]] == ["Approve"]
+    assert reason["approve"] == {}
+    assert "reject" not in reason
     assert "input" not in reason

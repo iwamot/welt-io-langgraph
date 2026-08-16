@@ -108,24 +108,22 @@ A tool message carries the name of the tool that produced it, so nothing else ha
 
 Each event carries only what Welt reads, and an event with nothing to render — a text chunk the model left empty, a file with no bytes — is not sent at all.
 
-#### `interrupt_reason(message, options=..., input=...)`
+#### `interrupt_reason(message, options=..., approve=..., reject=..., input=...)`
 
-Builds the structured reason Welt renders as a message with the specified widgets — choice buttons (`options`), a free-text field (`input`), or both. An option's `value` is any JSON value, and the pressed button answers with it as it was declared; with neither widget the message renders as itself and Welt's default **Approve** / **Deny** buttons answer it. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt), typed as `OptionSpec` and `InputSpec`, and omitted fields keep Welt's defaults:
+Builds the structured reason Welt renders as a message with the specified widgets — the approve and reject buttons Welt words and values itself (`approve`, `reject`), choice buttons of your own (`options`), a free-text field (`input`), or any combination. `approve` and `reject` answer with `True` and `False`, so a question whose decision is approval asks for them by name instead of inventing values; `{}` takes Welt's wording, and a `label` or `style` overrides it. An option's `value` is any JSON value, and the pressed button answers with it as it was declared. With no widget at all the message renders as itself and Welt's default buttons answer it. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt), typed as `DecisionSpec`, `OptionSpec`, and `InputSpec`, and omitted fields keep Welt's defaults:
 
 ```python
 answer = interrupt(
     interrupt_reason(
         "Deploy to prod?",
-        [
-            {"value": "Deploy", "style": "primary"},
-            {"value": "Cancel"},
-        ],
+        approve={"label": "Deploy"},
+        reject={"label": "Cancel"},
         input={"label": "Or type your answer"},
     )
 )
 ```
 
-Building the reason through this helper is what makes a typo an error. `interrupt` takes its value as `Any`, so a dict literal handed to it directly is checked by nothing, and Welt's reaction to a reason it cannot match is its default **Approve** / **Deny** buttons — no error, no log, just widgets you did not ask for. The typed parameters catch a misspelled key before the run; the checks inside catch it in runs where no type checker was involved. What they check is the shape, not the size: how many buttons one Slack block holds, and how long a button value may be, are Welt's to enforce.
+Building the reason through this helper is what makes a typo an error. `interrupt` takes its value as `Any`, so a dict literal handed to it directly is checked by nothing, and Welt's reaction to a reason it cannot match is its default buttons — no error, no log, just widgets you did not ask for. The typed parameters catch a misspelled key before the run; the checks inside catch it in runs where no type checker was involved. What they check is the shape, not the size: how many buttons one Slack block holds, and how long a button value may be, are Welt's to enforce.
 
 ## Working with interrupts
 
@@ -133,7 +131,7 @@ Building the reason through this helper is what makes a typo an error. `interrup
 
 - **`interrupt` needs a checkpointer**, even though the conversation history lives in Slack — pausing and resuming run through checkpoints. An in-memory checkpointer works on AgentCore Runtime, where each session keeps its own microVM.
 - **Start each conversation turn on a fresh thread.** Welt sends the whole Slack thread every turn by default, so letting the checkpointer stack turns into its own history would double the conversation. Resume alone reuses the interrupted thread's config. (An agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side.)
-- **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default **Approve** / **Deny** buttons, whose answers arrive as `True` / `False`.
+- **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default buttons, whose answers arrive as `True` / `False`.
 - **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/functional-api#task): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.
 
 ## Gating tools with `HumanInTheLoopMiddleware`
@@ -155,15 +153,16 @@ create_agent(
 )
 ```
 
-The decisions an action allows become its widgets, and the answer comes back as the decision the widget stands for:
+The decisions an action allows become its widgets, and the answer comes back as the decision the widget stands for. Nothing here words a button: the approve and reject buttons are asked of Welt by name, so what approval is called stays Welt's to say.
 
 | Allowed decision | In the Slack thread | On approval of that answer |
 |---|---|---|
-| `approve` | An **Approve** button | The tool runs as the model called it |
-| `reject` | A **Reject** button | The tool does not run; the model is told it was rejected |
+| `approve` | Welt's approve button | The tool runs as the model called it |
+| `reject` | Welt's reject button | The tool does not run; the model is told it was rejected |
 | `respond` | A free-text field | The tool does not run; the typed text reaches the model as the tool's result |
 | `edit` | Nothing | — |
 
+- **Write the question's body with `description`.** Left out, the middleware writes its own — a prefix over the tool's name and its arguments as Python renders a dict — since it knows nothing about Slack. `InterruptOnConfig`'s `description` takes a string, or a callable over the call, the state, and the runtime; the [example agent](examples/agent) formats the arguments as JSON in a code block. It is the human's whole view of what they are approving.
 - **A press is identified by the widget it came from.** Welt says which widget produced each answer, so a press maps to the decision its button stands for and submitted text becomes the `respond` decision — a typed "approve" included, since what it means is read where meaning belongs: it reaches the model as the tool's answer.
 - **`edit` has no widget**, rewriting an action's arguments being a form the wire has no shape for. An action allowing `edit` alongside others is asked about with the widgets for the rest; one allowing `edit` alone is passed through to Welt's fallback rendering, whose answers the middleware cannot resume from.
 - **One request becomes one question per action.** The middleware bundles every gated call of a turn into a single interrupt and resumes from one decision per action; a Welt stop carries as many questions as it likes, so each action is asked about on its own — buttons per action, answered in any order, and Welt resumes the run once all of them are answered.

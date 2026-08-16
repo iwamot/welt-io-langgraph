@@ -114,10 +114,8 @@ def test_one_request_becomes_one_question_per_gated_call() -> None:
 def test_each_question_offers_only_what_its_action_allows() -> None:
     send_email, delete_file = asked("widgets")
 
-    assert [option["label"] for option in delete_file["reason"]["options"]] == [
-        "Approve",
-        "Reject",
-    ]
+    assert delete_file["reason"]["approve"] == {}
+    assert delete_file["reason"]["reject"] == {}
     assert "input" not in delete_file["reason"]
     assert send_email["reason"]["input"] == {}
 
@@ -125,8 +123,8 @@ def test_each_question_offers_only_what_its_action_allows() -> None:
 def test_a_pressed_reject_stops_the_call_it_was_asked_about() -> None:
     send_email, delete_file = asked("reject")
     answers = {
-        send_email["id"]: _pressed(send_email["reason"]["options"][0]["value"]),
-        delete_file["id"]: _pressed(delete_file["reason"]["options"][1]["value"]),
+        send_email["id"]: _pressed(True),
+        delete_file["id"]: _pressed(False),
     }
 
     messages = answered("reject", answers)
@@ -142,15 +140,15 @@ def test_a_typed_answer_reaches_the_model_as_the_tool_s_answer() -> None:
     send_email, delete_file = asked("typed")
     answers = {
         send_email["id"]: {"value": "approve", "source": "input"},
-        delete_file["id"]: _pressed(delete_file["reason"]["options"][1]["value"]),
+        delete_file["id"]: _pressed(False),
     }
 
     messages = answered("typed", answers)
 
     # Typed rather than pressed, the word travels on as text — a word
-    # matching a button's value decides nothing here, since the widget it
-    # came from is what says which decision was made, and the model reads
-    # the answer as the tool's own.
+    # naming a decision decides nothing here, since the widget it came
+    # from is what says which decision was made, and the model reads the
+    # answer as the tool's own.
     answer = messages[1]
     assert (answer.tool_call_id, answer.status, answer.content) == (
         "call-1",
