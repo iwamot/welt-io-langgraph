@@ -42,8 +42,8 @@ def test_no_answers_decode_to_no_resume_input() -> None:
 
 def test_hitl_answers_are_rejoined_into_decisions() -> None:
     answers = {
-        "welt-io:hitl:0:i-1": _pressed("approve"),
-        "welt-io:hitl:1:i-1": _pressed("reject"),
+        "welt-io:hitl:0:i-1": _pressed(True),
+        "welt-io:hitl:1:i-1": _pressed(False),
         "welt-io:hitl:2:i-1": _typed("ask ops first"),
     }
 
@@ -60,8 +60,8 @@ def test_hitl_answers_are_rejoined_into_decisions() -> None:
 
 def test_hitl_decisions_follow_action_order() -> None:
     answers = {
-        "welt-io:hitl:1:i-1": _pressed("reject"),
-        "welt-io:hitl:0:i-1": _pressed("approve"),
+        "welt-io:hitl:1:i-1": _pressed(False),
+        "welt-io:hitl:0:i-1": _pressed(True),
     }
 
     assert decode_interrupt_responses(answers) == {
@@ -87,8 +87,8 @@ def test_a_pressed_value_no_question_offered_rejects() -> None:
 
 def test_hitl_answers_leaving_a_gap_travel_on_for_the_middleware_to_refuse() -> None:
     answers = {
-        "welt-io:hitl:0:i-1": _pressed("approve"),
-        "welt-io:hitl:2:i-1": _pressed("approve"),
+        "welt-io:hitl:0:i-1": _pressed(True),
+        "welt-io:hitl:2:i-1": _pressed(True),
     }
 
     assert decode_interrupt_responses(answers) == {
@@ -109,7 +109,7 @@ def test_hitl_answers_keep_the_place_of_their_first_answer() -> None:
 
 def test_hitl_requests_are_rejoined_one_by_one() -> None:
     answers = {
-        "welt-io:hitl:0:i-1": _pressed("approve"),
+        "welt-io:hitl:0:i-1": _pressed(True),
         "welt-io:hitl:0:i-2": _pressed("reject"),
     }
 
