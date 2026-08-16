@@ -159,10 +159,11 @@ The decisions an action allows become its widgets, and the answer comes back as 
 |---|---|---|
 | `approve` | Welt's approve button | The tool runs as the model called it |
 | `reject` | Welt's reject button | The tool does not run; the model is told it was rejected |
-| `respond` | A free-text field | The tool does not run; the typed text reaches the model as the tool's result |
+| `respond` | A free-text field labelled after the call | The tool does not run; the typed text reaches the model as the tool's result |
 | `edit` | Nothing | — |
 
 - **Write the question's body with `description`.** Left out, the middleware writes its own — a prefix over the tool's name and its arguments as Python renders a dict — since it knows nothing about Slack. `InterruptOnConfig`'s `description` takes a string, or a callable over the call, the state, and the runtime; the [example agent](examples/agent) formats the arguments as JSON in a code block. It is the human's whole view of what they are approving.
+- **The free-text field is labelled `Answer instead of running <tool>`.** Welt labels a field `Answer`, which reads the same whether the tool runs or not; naming the call says that answering here replaces running it, and keeps the field distinct from one opened with `interrupt` inside a tool, where what is typed goes to the tool rather than around it.
 - **A press is identified by the widget it came from.** Welt says which widget produced each answer, so a press maps to the decision its button stands for and submitted text becomes the `respond` decision — a typed "approve" included, since what it means is read where meaning belongs: it reaches the model as the tool's answer.
 - **`edit` has no widget**, rewriting an action's arguments being a form the wire has no shape for. An action allowing `edit` alongside others is asked about with the widgets for the rest; one allowing `edit` alone is passed through to Welt's fallback rendering, whose answers the middleware cannot resume from.
 - **One request becomes one question per action.** The middleware bundles every gated call of a turn into a single interrupt and resumes from one decision per action; a Welt stop carries as many questions as it likes, so each action is asked about on its own — buttons per action, answered in any order, and Welt resumes the run once all of them are answered.

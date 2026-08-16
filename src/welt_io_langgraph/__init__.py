@@ -967,10 +967,18 @@ def _hitl_reason(action_request: dict, name: str, allowed: list) -> dict | None:
     The decisions the action allows decide the widgets, one for one:
     `approve` and `reject` ask Welt for the buttons it words and values
     itself, and `respond` — the human answering on the tool's behalf —
-    becomes the free-text field, labelled by Welt since what an answer
-    means is the agent's call. `edit` is left out, having no widget in the
-    wire. Nothing here words a button: what approval is called belongs to
-    Welt, where a deployment can say it in its own language.
+    becomes the free-text field, labelled here after the call it stands in
+    for. `edit` is left out, having no widget in the wire. Nothing here
+    words a button: what approval is called belongs to Welt, where a
+    deployment can say it in its own language.
+
+    The field is what this adapter has to word. Welt labels a field
+    `Answer`, which reads the same whether the tool runs or not, and what
+    typing there does — the tool never running, the text reaching the model
+    as its result — is the middleware's rule, so only this side knows it.
+    Naming the call in the label keeps the field distinct from one an
+    author opened with `interrupt` inside a tool, where what is typed goes
+    to the tool rather than around it.
 
     The middleware describes every action it asks about, so the
     description is the question's body; the action's name stands in for a
@@ -987,7 +995,9 @@ def _hitl_reason(action_request: dict, name: str, allowed: list) -> dict | None:
     """
     approve: DecisionSpec | None = {} if "approve" in allowed else None
     reject: DecisionSpec | None = {} if "reject" in allowed else None
-    input_spec: InputSpec | None = {} if "respond" in allowed else None
+    input_spec: InputSpec | None = (
+        {"label": f"Answer instead of running {name}"} if "respond" in allowed else None
+    )
     if approve is None and reject is None and input_spec is None:
         return None
     description = action_request.get("description")

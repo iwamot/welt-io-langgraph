@@ -117,7 +117,9 @@ def test_each_question_offers_only_what_its_action_allows() -> None:
     assert delete_file["reason"]["approve"] == {}
     assert delete_file["reason"]["reject"] == {}
     assert "input" not in delete_file["reason"]
-    assert send_email["reason"]["input"] == {}
+    assert send_email["reason"]["input"] == {
+        "label": "Answer instead of running send_email"
+    }
 
 
 def test_a_pressed_reject_stops_the_call_it_was_asked_about() -> None:
