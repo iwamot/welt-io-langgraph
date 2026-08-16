@@ -452,7 +452,7 @@ def test_hitl_request_becomes_a_question_for_its_action() -> None:
                     "message": "Tool execution requires approval\n\nTool: send_email",
                     "approve": {},
                     "reject": {},
-                    "input": {},
+                    "input": {"label": "Answer instead of running send_email"},
                 },
             }
         }
@@ -487,10 +487,29 @@ def test_hitl_request_splits_into_one_question_per_action() -> None:
             "interrupt": {
                 "id": "welt-io:hitl:1:i-1",
                 "name": "ask_expert",
-                "reason": {"message": "Answer for it?", "input": {}},
+                "reason": {
+                    "message": "Answer for it?",
+                    "input": {"label": "Answer instead of running ask_expert"},
+                },
             }
         },
     ]
+
+
+def test_hitl_free_text_field_is_labelled_after_the_call_it_replaces() -> None:
+    request = hitl_request(
+        {
+            "name": "book_flight",
+            "args": {},
+            "description": "Book it?",
+            "allowed": ["approve", "respond"],
+        }
+    )
+    items = [("updates", {"__interrupt__": (Interrupt(value=request, id="i-1"),)})]
+
+    reason = rendered(items)[0]["interrupt"]["reason"]
+
+    assert reason["input"] == {"label": "Answer instead of running book_flight"}
 
 
 def test_hitl_action_without_a_description_is_asked_about_by_name() -> None:
