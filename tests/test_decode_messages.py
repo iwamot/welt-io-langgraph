@@ -49,7 +49,8 @@ def test_decodes_image_document_and_video_blocks() -> None:
                     "type": "file",
                     "base64": encoded(b"doc"),
                     "mime_type": "application/pdf",
-                    "filename": "report",
+                    "name": "report",
+                    "filename": "report.pdf",
                 },
                 {
                     "type": "video",

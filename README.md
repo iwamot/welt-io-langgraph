@@ -44,7 +44,7 @@ Turns Welt's Converse-shaped messages — built from the Slack thread, file byte
 |---|---|
 | Text | Text |
 | Image | Image |
-| Document | File (the document's name carried as `filename`) |
+| Document | File (the document's name carried as `name`, and with its format as the extension as `filename`) |
 | Video | Video |
 
 Each file-carrying block gets the media type LangChain models expect in place of the Converse format token, and the base64 data stays base64 — standard content blocks need no decoding.

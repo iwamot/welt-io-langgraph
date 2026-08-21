@@ -171,7 +171,12 @@ def _decoded_block(block: dict) -> dict:
             "type": "file",
             "base64": media["source"]["bytes"],
             "mime_type": _DOCUMENT_MIME_TYPES[media["format"]],
-            "filename": media["name"],
+            # Two names for two consumers: Converse models read `name`,
+            # where a dot is invalid, so it stays the wire's dot-free
+            # name; OpenAI-compatible endpoints type the file by its
+            # `filename` extension, so that carries the format.
+            "name": media["name"],
+            "filename": f"{media['name']}.{media['format']}",
         }
     media = block["video"]
     return {
