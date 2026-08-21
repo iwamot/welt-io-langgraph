@@ -23,7 +23,9 @@ uv run --with bedrock-agentcore --with langchain --with langchain-aws \
   --with langgraph --with welt-io-langgraph --with "botocore[crt]" main.py
 ```
 
-The process needs AWS credentials the standard SDK way — environment variables, `AWS_PROFILE`, an SSO session, `aws login` (which is why `botocore[crt]` is included) — because the model runs on Amazon Bedrock. `MODEL_ID` takes any Converse model with access enabled in the Amazon Bedrock console, in the region your credentials point at; unset, the agent uses `global.anthropic.claude-sonnet-4-6`.
+The process needs AWS credentials the standard SDK way — environment variables, `AWS_PROFILE`, an SSO session, `aws login` (which is why `botocore[crt]` is included) — because the model runs on Amazon Bedrock.
+
+`MODEL_ID` takes any Converse model with access enabled in the Amazon Bedrock console, in the region your credentials point at; unset, the agent uses `global.anthropic.claude-sonnet-4-6`. The model is built in one place near the top of `main.py`: `ChatBedrockConverse`, which speaks Converse to bedrock-runtime. A commented-out block next to it swaps in `ChatOpenAIMantle` from `langchain-aws[openai]`, which speaks the Responses API to bedrock-mantle, Bedrock's OpenAI-compatible endpoint, instead.
 
 One difference from the cloud: AgentCore Runtime gives every session its own microVM, while the local server is a single process for all sessions — the agent stashes an interrupted run in one slot, so keep interrupt experiments to one thread at a time.
 
