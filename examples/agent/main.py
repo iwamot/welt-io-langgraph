@@ -98,7 +98,11 @@ def create_sample_file() -> list[dict]:
         {"type": "text", "text": f"Created {name}.csv."},
         {
             "type": "file",
+            # `name` is what Converse and the Slack upload use (dots are
+            # invalid there); `filename` is what OpenAI-compatible
+            # endpoints type the file by, so it carries the extension.
             "name": name,
+            "filename": f"{name}.csv",
             "mime_type": "text/csv",
             "base64": b64encode(csv).decode("ascii"),
         },
@@ -216,7 +220,11 @@ def sample_draft_report(topic: str) -> str | list[dict]:
             },
             {
                 "type": "file",
+                # `name` for Converse and the Slack upload, `filename` with
+                # the extension for OpenAI-compatible endpoints — as in
+                # create_sample_file.
                 "name": name,
+                "filename": f"{name}.md",
                 "mime_type": "text/markdown",
                 "base64": b64encode(draft.encode()).decode("ascii"),
             },
@@ -231,12 +239,28 @@ def sample_draft_report(topic: str) -> str | list[dict]:
 # documents for the model would.
 _FILES_FROM = {"create_sample_file", "sample_draft_report"}
 
+# The model is the one place that decides which Bedrock endpoint and API the
+# agent talks to; nothing else in this file depends on that choice.
+# ChatBedrockConverse speaks Converse to bedrock-runtime, so MODEL_ID takes
+# any Converse model there. An empty MODEL_ID means unset, like Welt's own
+# variables.
+_model_id = os.environ.get("MODEL_ID") or "global.anthropic.claude-sonnet-4-6"
+model = ChatBedrockConverse(model_id=_model_id)
+# For bedrock-mantle, Bedrock's OpenAI-compatible endpoint, swap in the
+# Mantle model from `langchain-aws[openai]` instead — short-term keys are
+# derived from your AWS credentials (or set AWS_BEARER_TOKEN_BEDROCK).
+# `base_url` pins the `/openai/v1` base path that `xai.grok-4.*` sits on;
+# models served on `/v1` (`openai.gpt-oss-*`, ...) drop it for the default:
+# from langchain_aws import ChatOpenAIMantle
+# _region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+# model = ChatOpenAIMantle(
+#     model=_model_id,
+#     use_responses_api=True,
+#     base_url=f"https://bedrock-mantle.{_region}.api.aws/openai/v1",
+# )
+
 agent = create_agent(
-    # Any Converse model with access enabled; an empty MODEL_ID means
-    # unset, like Welt's own variables.
-    model=ChatBedrockConverse(
-        model_id=os.environ.get("MODEL_ID") or "global.anthropic.claude-sonnet-4-6"
-    ),
+    model=model,
     tools=[
         current_time,
         create_sample_file,
