@@ -48,7 +48,7 @@ dev = [
     # library.
     "bedrock-agentcore==1.22.0",
     "langchain==1.3.16",
-    "langchain-aws==1.7.2",
+    "langchain-aws==1.7.3",
     # Pinned even though it arrives through langchain and langgraph: the
     # package declares a range for it, and a range gives Renovate nothing to
     # bump, which would leave CI on whatever version those two happen to
