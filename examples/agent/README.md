@@ -38,7 +38,11 @@ agentcore create --name WeltExample --framework LangChain_LangGraph --model-prov
 cd WeltExample
 
 curl -o app/WeltExample/main.py https://raw.githubusercontent.com/iwamot/welt-io-langgraph/main/examples/agent/main.py
-uv add --project app/WeltExample welt-io-langgraph langchain-aws
+
+# the template's requires-python floor sits below welt-io-langgraph's
+sed -i.bak 's/requires-python = ">=3.10"/requires-python = ">=3.12"/' app/WeltExample/pyproject.toml && rm app/WeltExample/pyproject.toml.bak
+# langchain-aws pulls in numpy, and the CodeZip packaging (Python 3.14, wheels only) needs a release with cp314 wheels
+uv add --project app/WeltExample welt-io-langgraph langchain-aws "numpy>=2.4.0"
 
 agentcore deploy
 ```
