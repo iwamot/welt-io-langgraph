@@ -1,12 +1,12 @@
 """A small AgentCore agent that Welt can drive.
 
-Receives Welt's payload, feeds it to a LangGraph agent, and yields the
-renderable subset of its `astream` items — the AgentCore Runtime SDK
+Receives Welt's payload, feeds it to a LangGraph agent, and streams back
+the renderable subset of its `astream` items — the AgentCore Runtime SDK
 emits each one as SSE, which Welt (https://github.com/iwamot/welt)
-renders into Slack. The payload carries one of two envelopes:
-Converse-shaped `messages` for a conversation turn, or
-`interrupt_responses` when a human answered the approval buttons of an
-interrupted run.
+renders into Slack. `welt_agent` is the whole connection: it reads which
+envelope Welt sent (a conversation turn, or the answers that resume an
+interrupted run), streams the graph on it, and keeps an interrupted run
+until its answers arrive.
 
 This example is a standalone deployable; Welt drives it only through the
 JSON wire contract, which welt-io-langgraph adapts in both directions.
@@ -15,7 +15,6 @@ JSON wire contract, which welt-io-langgraph adapts in both directions.
 import json
 import os
 from base64 import b64encode
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -26,30 +25,15 @@ from langchain.agents.middleware.types import AgentState
 from langchain.tools import tool
 from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import ToolCall
-from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import task
 from langgraph.runtime import Runtime
-from langgraph.types import Command, interrupt
+from langgraph.types import interrupt
 
-from welt_io_langgraph import (
-    decode_interrupt_responses,
-    decode_messages,
-    interrupt_reason,
-    renderable_events,
-)
+from welt_io_langgraph import interrupt_reason
+from welt_io_langgraph.agentcore import welt_agent
 
 app = BedrockAgentCoreApp()
-
-# Where an interrupted run waits for its answers. One slot is enough:
-# AgentCore Runtime runs each session in its own microVM, so this process
-# never serves two sessions. Resume only: a normal turn always streams on
-# a fresh thread built from the messages Welt sends (the Slack thread is
-# the source of truth for conversation history, so the checkpointer must
-# not stand in for it). No persistence either — the checkpointer below is
-# in-memory, and both live and die with the session's microVM (recycled
-# on idle timeout, 8 hours at most).
-_interrupted_config: RunnableConfig | None = None
 
 
 @tool
@@ -127,7 +111,7 @@ def sample_dangerous_action(action: str) -> str:
     Returns:
         str: The outcome of the action.
     """
-    return f"Ran: {action}. (This example doesn't actually run anything.)"
+    return f"Ran: {action}. Completed successfully (simulated by this demo tool)."
 
 
 def _approval_description(
@@ -289,55 +273,7 @@ agent = create_agent(
 )
 
 
-@app.entrypoint
-async def invoke(payload: dict) -> AsyncIterator[dict]:
-    """
-    Stream a reply to the conversation or approval answers Welt sent.
-
-    Args:
-        payload (dict): The invocation payload: Converse-shaped `messages`
-            built by Welt from the Slack thread (file blocks
-            base64-encoded), or `interrupt_responses` carrying the button
-            answers that resume an interrupted run.
-
-    Yields:
-        dict: The renderable subset of the agent's `astream` items.
-    """
-    global _interrupted_config
-
-    if "interrupt_responses" in payload:
-        config = _interrupted_config
-        _interrupted_config = None
-        if config is None:  # The microVM was recycled while the buttons waited.
-            # The SDK reports the raise as an `error` event, and Welt renders
-            # its resume-failure notice.
-            raise RuntimeError("No interrupted run to resume in this session.")
-        graph_input = Command(
-            resume=decode_interrupt_responses(payload["interrupt_responses"])
-        )
-    else:
-        # The envelope key is the discriminator, so a payload without
-        # either one is Welt's bug, and the KeyError it raises is reported
-        # as an `error` event by the SDK.
-        messages = decode_messages(payload["messages"])
-        # A fresh thread per turn: Welt sends the whole Slack thread every
-        # time, so letting the checkpointer stack turns into its own
-        # history would double the conversation.
-        config = RunnableConfig(configurable={"thread_id": uuid4().hex})
-        graph_input = {"messages": messages}
-
-    interrupted = False
-    # Reduce the stream to the JSON-serializable events Welt renders
-    stream = agent.astream(graph_input, config, stream_mode=["messages", "updates"])
-    async for event in renderable_events(stream, files_from=_FILES_FROM):
-        if "interrupt" in event:
-            interrupted = True
-        yield event
-
-    if interrupted:
-        # Re-stashed on every interrupted stop, so a resume that interrupts
-        # again keeps working.
-        _interrupted_config = config
+app.entrypoint(welt_agent(agent, files_from=_FILES_FROM))
 
 
 if __name__ == "__main__":
