@@ -10,7 +10,10 @@ not fit it in either direction:
   interrupted run with a plain mapping of interrupt id to the chosen
   answer; `decode_interrupt_responses` turns it into the mapping
   `Command(resume=...)` takes, the decisions a
-  `HumanInTheLoopMiddleware` request resumes from included.
+  `HumanInTheLoopMiddleware` request resumes from included. `start_reply`
+  is the starter over both: it reads which envelope Welt sent, decodes it
+  with the matching decoder, and starts the graph run on the caller's
+  config — it holds nothing.
 - Outbound, raw `astream` items carry values that are not
   JSON-serializable (message objects, Interrupt objects), which the
   AgentCore Runtime SDK would degrade to a plain string on the SSE wire.
@@ -43,9 +46,11 @@ bandwidth for something the renderer discards.
 
 import logging
 from collections.abc import AsyncIterator, Collection, Mapping, Sequence
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, NotRequired, Protocol, TypedDict
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
 try:
     from ._version import __version__
@@ -60,6 +65,7 @@ __all__ = [
     "decode_messages",
     "interrupt_reason",
     "renderable_events",
+    "start_reply",
 ]
 
 logger = logging.getLogger(__name__)
@@ -1008,3 +1014,74 @@ def _hitl_reason(action_request: dict, name: str, allowed: list) -> dict | None:
     description = action_request.get("description")
     message = description if isinstance(description, str) and description else name
     return interrupt_reason(message, approve=approve, reject=reject, input=input_spec)
+
+
+class _StreamingGraph(Protocol):
+    """What `start_reply` streams: the compiled graph's streaming face.
+
+    Importing the SDK to name the graph would say what the one member
+    already says. This names it instead, and a compiled graph satisfies
+    it.
+    """
+
+    def astream(
+        self,
+        input: dict | Command,
+        config: RunnableConfig,
+        *,
+        stream_mode: list,
+    ) -> AsyncIterator:
+        """Stream the graph's reply to one input."""
+
+
+def start_reply(
+    agent: _StreamingGraph,
+    payload: dict,
+    config: RunnableConfig,
+) -> AsyncIterator:
+    """
+    Start the stream that replies to the payload Welt sent.
+
+    The inbound half of the wiring every deployable needs: it reads which
+    envelope Welt sent — Converse-shaped `messages` for a conversation
+    turn, `interrupt_responses` for the answers that resume an interrupted
+    run — decodes it, and streams the graph on the result. Pass what comes
+    back to `renderable_events` for the outbound half::
+
+        stream = start_reply(agent, payload, config)
+        async for event in renderable_events(stream, files_from={"create_chart"}):
+            yield event
+
+    Which thread `config` names is the caller's to decide. A conversation
+    turn belongs on a fresh one, because the Slack thread is the source of
+    truth for conversation history and the messages Welt sends carry it
+    whole — letting the checkpointer stack turns into its own history
+    would double the conversation. A resume belongs on the thread the
+    interrupted run stopped in, which the caller kept — under the
+    interrupt ids Welt sends back, or however else suits the agent.
+    Nothing is held here.
+
+    Args:
+        agent (CompiledStateGraph): The compiled graph to stream.
+            Interrupts need it compiled with a checkpointer — LangGraph's
+            own requirement, since pausing and resuming run through
+            checkpoints, even though the conversation history lives in
+            Slack; nothing here checks it.
+        payload (dict): The invocation payload, carrying one of the two
+            envelopes. What Welt sends is taken as correct, so a payload
+            carrying neither is Welt's bug, and the KeyError it raises is
+            reported as an `error` event by the AgentCore Runtime SDK.
+        config (RunnableConfig): The thread to stream on.
+
+    Returns:
+        AsyncIterator: The graph's raw stream, for `renderable_events` to
+            reduce.
+    """
+    graph_input: dict | Command
+    if "interrupt_responses" in payload:
+        graph_input = Command(
+            resume=decode_interrupt_responses(payload["interrupt_responses"])
+        )
+    else:
+        graph_input = {"messages": decode_messages(payload["messages"])}
+    return agent.astream(graph_input, config, stream_mode=["messages", "updates"])

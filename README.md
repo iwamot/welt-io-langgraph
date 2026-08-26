@@ -14,27 +14,34 @@ uv add welt-io-langgraph
 
 ## Usage
 
-`welt_agent` builds the whole AgentCore Runtime entrypoint for an agent Welt drives, so a deployable is your graph plus one mount line:
+`start_reply` and `renderable_events` are the wiring between Welt's payload and a LangGraph agent, so a deployable is your graph plus a short entrypoint:
 
 ```python
+from collections.abc import AsyncIterator
+from uuid import uuid4
+
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from langchain.agents import create_agent
-from langchain_aws import ChatBedrockConverse
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
-from welt_io_langgraph.agentcore import welt_agent
-
-agent = create_agent(
-    model=ChatBedrockConverse(model_id="global.anthropic.claude-sonnet-4-6"),
-    tools=[],
-    checkpointer=InMemorySaver(),
-)
+from welt_io_langgraph import renderable_events, start_reply
 
 app = BedrockAgentCoreApp()
-app.entrypoint(welt_agent(agent))
+agent = create_agent("bedrock_converse:global.anthropic.claude-sonnet-4-6", checkpointer=InMemorySaver())
+
+
+@app.entrypoint
+async def invoke(payload: dict) -> AsyncIterator[dict]:
+    config = RunnableConfig(configurable={"thread_id": uuid4().hex})
+    async for event in renderable_events(start_reply(agent, payload, config)):
+        yield event
+
 
 if __name__ == "__main__":
     app.run()
 ```
+
+A fresh thread per turn, because the Slack thread is the source of truth for conversation history. An agent with approval tools keeps the threads it needs to resume; [`examples/agent`](examples/agent) shows that as a map in `main.py`, holding each interrupted run's thread under the ids of the interrupts it raised and dropping the whole stop when the answers arrive.
 
 See [`examples/agent`](examples/agent) for the full version — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools). The sections below cover the entrypoint and the adapters it wires in.
 
@@ -54,19 +61,15 @@ Something misbehaving inside that range is worth an [issue](https://github.com/i
 
 ## API
 
-The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain LangGraph values do not fit it in either direction. Two functions adapt the inbound payload, two the outbound stream. `welt_agent` wires the three of them the entrypoint needs (`interrupt_reason` serves the tools themselves); reach for the pieces directly when your entrypoint needs a shape of its own. The messages they read are LangChain's, which carry [standard content blocks](https://docs.langchain.com/oss/python/langchain/messages).
+The wire between Welt and the agent is JSON, specified by [Welt's wire contract](https://github.com/iwamot/welt/blob/main/docs/wire.md) — plain LangGraph values do not fit it in either direction. Two functions adapt the inbound payload, two the outbound stream. `start_reply` wires the inbound pair into a stream (`interrupt_reason` serves the tools themselves); reach for the pieces directly when your entrypoint needs a shape of its own — messages to edit before the run, a graph to stream some other way. The messages they read are LangChain's, which carry [standard content blocks](https://docs.langchain.com/oss/python/langchain/messages).
 
-### Entrypoint
+### Reply
 
-#### `welt_agent(agent, files_from=...)`
+#### `start_reply(agent, payload, config)`
 
-Builds the entrypoint `BedrockAgentCoreApp` serves around a compiled graph. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — streams the graph on it, and yields the events Welt renders.
+Starts the stream that replies to Welt's payload. It reads which envelope Welt sent — Converse-shaped `messages` for a conversation turn, `interrupt_responses` for the answers that resume an interrupted run — decodes it, and streams the graph on the result. What comes back is the graph's raw stream, for `renderable_events` to reduce.
 
-The graph must be compiled with a checkpointer — interrupts pause and resume through checkpoints — and a graph without one is refused at mount, where the mistake is visible, instead of at the first interrupt. Every turn streams on a fresh thread: the Slack thread is the source of truth for conversation history, and letting the checkpointer stack turns into its own history would double the conversation. An interrupted run's config waits inside the entrypoint for its answers — one slot, resume-only, living and dying with the session's microVM (recycled on idle timeout, 8 hours at most); resuming after that raises, which Welt renders as its resume-failure notice. `files_from` passes through to `renderable_events` below.
-
-#### `send_file(name, data)`
-
-Queues one file for the Slack thread from inside a tool, riding the wire beside the reply being streamed. The model never sees it — a tool whose file matters to the conversation says what it holds in its result, or returns it as a file content block and is named in `files_from`, which puts it in front of the model and on the thread both. Every turn starts with the queue empty, so a file a failed turn left behind never rides a later reply, and an empty name or empty bytes is refused where the tool is still on the stack — Slack refuses a zero-byte upload, and the whole reply fails with it.
+Interrupts need the graph compiled with a checkpointer — LangGraph's own requirement, since pausing and resuming run through checkpoints; nothing here checks it. Which thread `config` names stays with the caller: a conversation turn belongs on a fresh one, because the Slack thread is the source of truth for conversation history and letting the checkpointer stack turns into its own history would double the conversation; a resume belongs on the thread the interrupted run stopped in, which the caller kept — under the interrupt ids Welt sends back, or however else suits the agent. Nothing is held here, so nothing here decides how long an unanswered approval stays answerable.
 
 ### Inbound
 
@@ -95,7 +98,7 @@ agent.astream(
 )
 ```
 
-The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the config must point at the interrupted thread, which `welt_agent` stashes when an interrupt event goes by — an entrypoint of your own does the same. Answers to a [`HumanInTheLoopMiddleware`](#gating-tools-with-humanintheloopmiddleware) request are rejoined into the decisions it resumes from, so the host app calls this the same way either way.
+The interrupt ids are LangGraph's own, as emitted by `renderable_events`; the config must point at the interrupted thread, which the [example agent](examples/agent)'s entrypoint stashes when an interrupt event goes by. Answers to a [`HumanInTheLoopMiddleware`](#gating-tools-with-humanintheloopmiddleware) request are rejoined into the decisions it resumes from, so the host app calls this the same way either way.
 
 #### What arrives is taken as correct
 

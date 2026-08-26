@@ -3,10 +3,10 @@
 Receives Welt's payload, feeds it to a LangGraph agent, and streams back
 the renderable subset of its `astream` items — the AgentCore Runtime SDK
 emits each one as SSE, which Welt (https://github.com/iwamot/welt)
-renders into Slack. `welt_agent` is the whole connection: it reads which
+renders into Slack. `start_reply` reads which
 envelope Welt sent (a conversation turn, or the answers that resume an
-interrupted run), streams the graph on it, and keeps an interrupted run
-until its answers arrive.
+interrupted run) and streams the graph on it; keeping an interrupted
+run's thread until its answers arrive is this file's `_interrupted` map.
 
 This example is a standalone deployable; Welt drives it only through the
 JSON wire contract, which welt-io-langgraph adapts in both directions.
@@ -15,6 +15,7 @@ JSON wire contract, which welt-io-langgraph adapts in both directions.
 import json
 import os
 from base64 import b64encode
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -25,13 +26,13 @@ from langchain.agents.middleware.types import AgentState
 from langchain.tools import tool
 from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import ToolCall
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import task
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
-from welt_io_langgraph import interrupt_reason
-from welt_io_langgraph.agentcore import welt_agent
+from welt_io_langgraph import interrupt_reason, renderable_events, start_reply
 
 app = BedrockAgentCoreApp()
 
@@ -273,7 +274,72 @@ agent = create_agent(
 )
 
 
-app.entrypoint(welt_agent(agent, files_from=_FILES_FROM))
+# The threads whose runs stopped for human input, under the ids of the
+# interrupts they raised — Welt sends those ids back when the buttons are
+# answered. An entry lives as long as this process: AgentCore Runtime
+# gives each session its own microVM, so a resume that arrives after it
+# was recycled finds nothing and raises, which Welt renders as its
+# resume-failure notice.
+_interrupted: dict[str, RunnableConfig] = {}
+
+
+def _resumed(answers: Mapping[str, object]) -> RunnableConfig:
+    """
+    Take the thread the answered interrupts belong to out of the map.
+
+    A stop's questions are answered together, so every id in one payload
+    names the same thread, and the whole stop leaves the map with it. An
+    answered id the map no longer holds means this process lost the
+    thread, so there is nothing left to resume.
+
+    Args:
+        answers (Mapping[str, object]): Welt's `interrupt_responses`,
+            keyed by interrupt id.
+
+    Returns:
+        RunnableConfig: The thread that resumes the answers.
+
+    Raises:
+        RuntimeError: If no answered id is held.
+    """
+    for answered in answers:
+        if answered in _interrupted:
+            held = _interrupted[answered]
+            break
+    else:
+        raise RuntimeError("No interrupted run to resume in this session.")
+    for interrupt_id in [i for i, config in _interrupted.items() if config is held]:
+        del _interrupted[interrupt_id]
+    return held
+
+
+@app.entrypoint
+async def invoke(payload: dict) -> AsyncIterator[dict]:
+    """
+    Stream a reply to the conversation or approval answers Welt sent.
+
+    Args:
+        payload (dict): Welt's invocation payload.
+
+    Yields:
+        dict: The events Welt renders.
+    """
+    # Key presence tells the envelopes apart, as `start_reply` reads it.
+    if "interrupt_responses" in payload:
+        config = _resumed(payload["interrupt_responses"])
+    else:
+        # A fresh thread per turn: Welt sends the whole Slack thread every
+        # time, so letting the checkpointer stack turns into its own
+        # history would double the conversation.
+        config = RunnableConfig(configurable={"thread_id": uuid4().hex})
+
+    stream = start_reply(agent, payload, config)
+    async for event in renderable_events(stream, files_from=_FILES_FROM):
+        raised = event.get("interrupt")
+        if raised is not None:
+            # The run stopped here; this thread is what resumes it.
+            _interrupted[raised["id"]] = config
+        yield event
 
 
 if __name__ == "__main__":
