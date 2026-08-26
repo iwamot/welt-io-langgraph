@@ -220,19 +220,41 @@ def test_file_block_kinds_and_media_subtypes_name_the_file() -> None:
     ]
 
 
-def test_file_block_with_odd_media_subtype_gets_a_bin_extension() -> None:
+def test_media_types_the_wire_carries_get_their_own_extension() -> None:
+    # A media subtype is not an extension in general, so these are named
+    # from the whole media type rather than the part after the slash.
     message = AIMessage(
         content=[
-            {
-                "type": "file",
-                "base64": "aGk=",
-                "mime_type": "application/vnd.ms-excel",
-            }
+            {"type": "file", "base64": "aGk=", "mime_type": mime_type}
+            for mime_type in (
+                "application/vnd.ms-excel",
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        ]
+        + [{"type": "video", "base64": "aGk=", "mime_type": "video/x-ms-wmv"}]
+    )
+
+    assert rendered([("messages", (message, {}))]) == [
+        {"file": {"name": "file.xls", "bytes": "aGk="}},
+        {"file": {"name": "file.doc", "bytes": "aGk="}},
+        {"file": {"name": "file.xlsx", "bytes": "aGk="}},
+        {"file": {"name": "video.wmv", "bytes": "aGk="}},
+    ]
+
+
+def test_a_media_type_with_no_usable_extension_gets_bin() -> None:
+    message = AIMessage(
+        content=[
+            {"type": "file", "base64": "aGk=", "mime_type": "application/x-tar-ish"},
+            # No slash to split on, which is not a shape to raise over.
+            {"type": "file", "base64": "aGk=", "mime_type": "pdf"},
         ]
     )
 
     assert rendered([("messages", (message, {}))]) == [
-        {"file": {"name": "file.bin", "bytes": "aGk="}}
+        {"file": {"name": "file.bin", "bytes": "aGk="}},
+        {"file": {"name": "file.bin", "bytes": "aGk="}},
     ]
 
 

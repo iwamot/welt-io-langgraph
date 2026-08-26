@@ -824,13 +824,18 @@ def _file_events(message: BaseMessage, origin: str) -> list[dict]:
     return events
 
 
-# Media subtypes double as filename extensions, except these.
-_EXTENSION_BY_SUBTYPE = {
-    "3gpp": "3gp",
-    "markdown": "md",
-    "plain": "txt",
-    "quicktime": "mov",
-    "x-matroska": "mkv",
+# Converse format tokens double as filename extensions, except this one.
+_EXTENSION_BY_FORMAT = {"three_gp": "3gp"}
+
+# The extension for every media type the wire's formats map to, built from
+# the maps above so the two cannot drift. A media subtype is not an
+# extension in general — `application/vnd.ms-excel` and `video/x-ms-wmv`
+# have none in them — which is why this is keyed on the whole media type.
+# Where two formats share one (mpeg and mpg), the last one named wins.
+_EXTENSION_BY_MIME_TYPE = {
+    mime_type: _EXTENSION_BY_FORMAT.get(format_token, format_token)
+    for mapping in (_IMAGE_MIME_TYPES, _DOCUMENT_MIME_TYPES, _VIDEO_MIME_TYPES)
+    for format_token, mime_type in mapping.items()
 }
 
 
@@ -846,17 +851,20 @@ def _file_name(kind: str, block: Mapping) -> str:
     Args:
         kind (str): The block's type (image, file, video, or audio).
         block (Mapping): The content block, whose `name` names the file
-            and whose media subtype provides the extension.
+            and whose media type provides the extension.
 
     Returns:
-        str: The block's name or kind, plus the media subtype as extension.
+        str: The block's name or kind, plus an extension for its media
+            type — the media subtype for one the wire does not carry, or
+            `bin` where that is not a usable extension either.
     """
     name = block.get("name")
     base = name if isinstance(name, str) and name else kind
     mime_type = block.get("mime_type")
-    subtype = mime_type.split("/", 1)[1] if isinstance(mime_type, str) else ""
-    extension = _EXTENSION_BY_SUBTYPE.get(subtype)
+    mime_type = mime_type if isinstance(mime_type, str) else ""
+    extension = _EXTENSION_BY_MIME_TYPE.get(mime_type)
     if extension is None:
+        _, _, subtype = mime_type.partition("/")
         extension = subtype if subtype.isalnum() and subtype.islower() else "bin"
     return f"{base}.{extension}"
 
