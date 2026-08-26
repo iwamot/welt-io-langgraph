@@ -41,13 +41,14 @@ curl -o app/WeltExample/main.py https://raw.githubusercontent.com/iwamot/welt-io
 
 # the template's requires-python floor sits below welt-io-langgraph's
 sed -i.bak 's/requires-python = ">=3.10"/requires-python = ">=3.12"/' app/WeltExample/pyproject.toml && rm app/WeltExample/pyproject.toml.bak
-# langchain-aws pulls in numpy, and the CodeZip packaging (Python 3.14, wheels only) needs a release with cp314 wheels
-uv add --project app/WeltExample welt-io-langgraph langchain-aws "numpy>=2.4.0"
+uv add --project app/WeltExample welt-io-langgraph langchain-aws
 
 agentcore deploy
 ```
 
-The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for it in the Amazon Bedrock console, in the region you deployed to, or point the `MODEL_ID` environment variable at another Converse model. Note the agent runtime ARN from the deploy output: Welt's `AGENT_ARN` points at it.
+The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for it in the Amazon Bedrock console, in the region you deployed to, or point the `MODEL_ID` environment variable at another Converse model. `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
+
+The CLI has no teardown command — removing the deployment means deleting the CloudFormation stack it created, `AgentCore-WeltExample-default`.
 
 ## Tools
 
