@@ -224,24 +224,31 @@ def sample_draft_report(topic: str) -> str | list[dict]:
 # documents for the model would.
 _FILES_FROM = {"create_sample_file", "sample_draft_report"}
 
-# The model is the one place that decides which Bedrock endpoint and API the
-# agent talks to; nothing else in this file depends on that choice.
+# The model is the one place that decides which Bedrock endpoint, API, and
+# region the agent talks to; nothing else in this file depends on that choice.
 # ChatBedrockConverse speaks Converse to bedrock-runtime, so MODEL_ID takes
-# any Converse model there. An empty MODEL_ID means unset, like Welt's own
-# variables.
+# any Converse model there. BEDROCK_REGION sends the model calls to a region
+# of their own; unset, they go where the AWS SDK resolves one. An empty value
+# means unset, like Welt's own variables.
 _model_id = os.environ.get("MODEL_ID") or "global.anthropic.claude-sonnet-4-6"
-model = ChatBedrockConverse(model_id=_model_id)
+_region = os.environ.get("BEDROCK_REGION") or None
+model = ChatBedrockConverse(model_id=_model_id, region_name=_region)
 # For bedrock-mantle, Bedrock's OpenAI-compatible endpoint, swap in the
 # Mantle model from `langchain-aws[openai]` instead — short-term keys are
 # derived from your AWS credentials (or set AWS_BEARER_TOKEN_BEDROCK).
 # `base_url` pins the `/openai/v1` base path that `xai.grok-4.*` sits on;
-# models served on `/v1` (`openai.gpt-oss-*`, ...) drop it for the default:
+# models served on `/v1` (`openai.gpt-oss-*`, ...) drop it for the default.
+# An explicit `base_url` carries the region, so it needs one resolved here:
 # from langchain_aws import ChatOpenAIMantle
-# _region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+# _mantle_region = (
+#     _region
+#     or os.environ.get("AWS_REGION")
+#     or os.environ.get("AWS_DEFAULT_REGION")
+# )
 # model = ChatOpenAIMantle(
 #     model=_model_id,
 #     use_responses_api=True,
-#     base_url=f"https://bedrock-mantle.{_region}.api.aws/openai/v1",
+#     base_url=f"https://bedrock-mantle.{_mantle_region}.api.aws/openai/v1",
 # )
 
 agent = create_agent(
