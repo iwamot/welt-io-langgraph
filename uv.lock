@@ -345,7 +345,7 @@ wheels = [
 
 [[package]]
 name = "langchain-aws"
-version = "1.7.7"
+version = "1.7.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
@@ -353,9 +353,9 @@ dependencies = [
     { name = "numpy" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/44/72e6cc45c6b147bbc2b26f98381757ed2fe119fcf55f0562b6ae171895c0/langchain_aws-1.7.7.tar.gz", hash = "sha256:7d61f78f5ebeb1638cad748799e6e2af7e9c8e99a6b3357197b2923468843048", size = 761847, upload-time = "2026-09-16T00:05:44.714Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/cc/d6a33e8ecea375d8f0900b6708e3d93bd67da7b0f50ba5c2e01222302c99/langchain_aws-1.7.8.tar.gz", hash = "sha256:3e1349231ab1c6952242946427ea63fbe97037eec21fab6a3c87327757fb2ef1", size = 762459, upload-time = "2026-09-16T17:29:44.936Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/74/01/f441ecbde035654019fcaa616090b64de2eeeea9ab88b7c8c0f95edd7a73/langchain_aws-1.7.7-py3-none-any.whl", hash = "sha256:0e2645a40fb8ebbf3f79b0f8dba5c7a619f5785837c64c4dc5e59ba887eedd5a", size = 237292, upload-time = "2026-09-16T00:05:43.604Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/fe/24a8503cccc7e47f95318c5e993ed880fcc487156d5144b5887b3e9c83f0/langchain_aws-1.7.8-py3-none-any.whl", hash = "sha256:ebaf0cf3378c5934ca4482f2512b06eafe58e5df8bf03de6f47846777842be23", size = 237441, upload-time = "2026-09-16T17:29:43.367Z" },
 ]
 
 [[package]]
@@ -1106,7 +1106,7 @@ requires-dist = [
 dev = [
     { name = "bedrock-agentcore", specifier = "==1.23.1" },
     { name = "langchain", specifier = "==1.4.1" },
-    { name = "langchain-aws", specifier = "==1.7.7" },
+    { name = "langchain-aws", specifier = "==1.7.8" },
     { name = "langchain-core", specifier = "==1.6.3" },
     { name = "langgraph", specifier = "==1.2.11" },
     { name = "packaging", specifier = "==26.3" },
