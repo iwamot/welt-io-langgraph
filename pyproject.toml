@@ -46,7 +46,7 @@ dev = [
     # examples/agent is a standalone deployable; its dependencies are
     # installed here so lint and type checks cover it against the local
     # library.
-    "bedrock-agentcore==1.23.0",
+    "bedrock-agentcore==1.23.1",
     "langchain==1.4.0",
     "langchain-aws==1.7.7",
     # Pinned even though it arrives through langchain and langgraph: the
