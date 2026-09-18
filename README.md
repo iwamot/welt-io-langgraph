@@ -145,6 +145,12 @@ A tool message carries the name of the tool that produced it, so nothing else ha
 
 Each event carries only what Welt reads, and an event with nothing to render — a text chunk the model left empty, a file with no bytes — is not sent at all.
 
+The model calls LangChain's middleware makes for its own purposes — the summary `SummarizationMiddleware` writes, the pick `LLMToolSelectorMiddleware` makes — reach the same stream, and are dropped along with the rest: `langchain` marks them in the payload's metadata (1.3.15 and later), and a marked call renders nothing. On an older `langchain` the marker is absent and a summary lands in the thread as if the model had written it. Handing such a middleware a model tagged `nostream` keeps its calls off the stream instead, on any version:
+
+```python
+SummarizationMiddleware(model=model.with_config(tags=["nostream"]))
+```
+
 #### `interrupt_reason(message, options=..., approve=..., reject=..., input=...)`
 
 Builds the structured reason Welt renders as a message with the specified widgets — the approve and reject buttons Welt words and values itself (`approve`, `reject`), choice buttons of your own (`options`), a free-text field (`input`), or any combination. `approve` and `reject` answer with `True` and `False`, so a question whose decision is approval asks for them by name instead of inventing values; `{}` takes Welt's wording, and a `label` or `style` overrides it. An option's `value` is any JSON value, and the pressed button answers with it as it was declared. With no widget at all the message renders as itself and Welt's default buttons answer it. The specs are [the wire's own shapes](https://github.com/iwamot/welt/blob/main/docs/wire.md#interrupt), typed as `DecisionSpec`, `OptionSpec`, and `InputSpec`, and omitted fields keep Welt's defaults:

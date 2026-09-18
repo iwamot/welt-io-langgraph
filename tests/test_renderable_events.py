@@ -311,6 +311,28 @@ def test_human_message_yields_nothing() -> None:
     assert rendered([("messages", (HumanMessage("hi"), {}))]) == []
 
 
+def test_a_middlewares_own_model_call_yields_nothing() -> None:
+    # What `SummarizationMiddleware` and friends stream is their own work,
+    # not the agent's reply, and LangChain marks it in the metadata.
+    internal = {"lc_source": "summarization", "lc_internal_call": "token"}
+    items = [
+        ("messages", (AIMessageChunk(content="a summary"), internal)),
+        ("messages", (AIMessage("a summary"), internal)),
+    ]
+
+    assert rendered(items) == []
+
+
+def test_a_middlewares_own_tool_calls_raise_no_indicator() -> None:
+    message = AIMessage(
+        content="",
+        tool_calls=[{"name": "current_time", "args": {}, "id": "call-1"}],
+    )
+    items = [("messages", (message, {"lc_internal_call": "token"}))]
+
+    assert rendered(items) == []
+
+
 def test_a_value_that_only_looks_like_a_message_yields_nothing() -> None:
     # The stream is read through LangChain's own types rather than by
     # guessing at attributes, so a foreign object carrying the same names
