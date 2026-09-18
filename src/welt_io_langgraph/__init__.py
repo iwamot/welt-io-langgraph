@@ -606,7 +606,10 @@ async def renderable_events(
     the model returns, or a tool named in `files_from` returned), and
     interrupts (`interrupt` — each pending interrupt's id and value, the
     value passed through unmodified as the reason since interpreting it is
-    the renderer's job). Everything else is dropped.
+    the renderer's job). Everything else is dropped, including the model
+    calls LangChain's middleware makes for itself — a summary, a tool pick
+    — which the stream marks as internal and which are not part of the
+    reply.
 
     Which of the agent's files belong in the reply is the agent's call, so
     a tool's files become `file` events only when the tool is named in
@@ -640,6 +643,15 @@ async def renderable_events(
                 yield event
 
 
+# LangChain marks the model calls its middleware makes for its own purposes
+# — summarization, tool selection, tool emulation — with this metadata key,
+# and names the key public for third-party middleware to reuse. It is
+# written out rather than imported because `langchain` is not a dependency
+# here: what this package reads is LangGraph's stream, and a graph can be
+# built without LangChain's middleware.
+_INTERNAL_CALL_METADATA_KEY = "lc_internal_call"
+
+
 def _message_events(payload: object, files_from: Collection[str] | None) -> list[dict]:
     """
     Extract renderable events from a `messages` stream item.
@@ -655,6 +667,10 @@ def _message_events(payload: object, files_from: Collection[str] | None) -> list
     block the tool returned, when the tool is one the agent takes files
     from.
 
+    A pair whose metadata marks the call as internal is a middleware's own
+    model call — a summary, a tool pick — rather than part of the reply,
+    and renders nothing.
+
     Args:
         payload (object): The `messages` payload of a stream item.
         files_from (Collection[str] | None): The names of the tools whose
@@ -663,9 +679,11 @@ def _message_events(payload: object, files_from: Collection[str] | None) -> list
     Returns:
         list[dict]: The renderable events, in message order.
     """
-    if not isinstance(payload, tuple) or not payload:
+    if not isinstance(payload, tuple) or len(payload) != 2:
         return []
-    message = payload[0]
+    message, metadata = payload
+    if _INTERNAL_CALL_METADATA_KEY in metadata:
+        return []
     # The chunk check leads: a chunk is an AIMessage too.
     if isinstance(message, AIMessageChunk):
         return _chunk_events(message)
