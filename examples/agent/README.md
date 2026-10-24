@@ -36,21 +36,27 @@ One difference from the cloud: AgentCore Runtime gives every session its own mic
 Deploy with the [AgentCore CLI](https://github.com/aws/agentcore-cli):
 
 ```sh
-agentcore create --name WeltExample --framework LangChain_LangGraph --model-provider Bedrock --memory none
+agentcore create --name WeltExample
 cd WeltExample
+agentcore add runtime --name WeltExample --language python
 
 curl -o app/WeltExample/main.py https://raw.githubusercontent.com/iwamot/welt-io-langgraph/main/examples/agent/main.py
 
-# the template's requires-python floor sits below welt-io-langgraph's
-sed -i.bak 's/requires-python = ">=3.10"/requires-python = ">=3.12"/' app/WeltExample/pyproject.toml && rm app/WeltExample/pyproject.toml.bak
-uv add --project app/WeltExample welt-io-langgraph langchain-aws
+# welt-io-langgraph's floor; left out, uv takes the local Python's, which may be newer than AgentCore runs
+uv init --bare --python 3.12 app/WeltExample
+uv add --project app/WeltExample bedrock-agentcore aws-opentelemetry-distro langchain langchain-aws welt-io-langgraph
 
 agentcore deploy
 ```
 
 The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for it in the Amazon Bedrock console, in the region you deployed to, or point the `MODEL_ID` environment variable at another Converse model — and `BEDROCK_REGION` at another region, to leave the model access where it already is. `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
 
-The CLI has no teardown command — removing the deployment means deleting the CloudFormation stack it created, `AgentCore-WeltExample-default`.
+To remove the deployment, take the runtime out of the project and deploy the empty project, which deletes the CloudFormation stack, `AgentCore-WeltExample-default`:
+
+```sh
+agentcore remove runtime --name WeltExample
+agentcore deploy --yes
+```
 
 ## Tools
 
