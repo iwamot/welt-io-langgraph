@@ -9,7 +9,7 @@ The [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) (Pytho
 ## Install
 
 ```bash
-uv add welt-io-langgraph
+uv add welt-io-langgraph bedrock-agentcore langchain langchain-aws
 ```
 
 ## Usage
@@ -42,6 +42,8 @@ if __name__ == "__main__":
 ```
 
 A fresh thread per turn, because the Slack thread is the source of truth for conversation history. An agent with approval tools keeps the threads it needs to resume; [`examples/agent`](examples/agent) shows that as a map in `main.py`, holding each interrupted run's thread under the ids of the interrupts it raised and dropping the whole stop when the answers arrive.
+
+To see it in Slack, run the file (`uv run main.py`). It serves on port 8080, where Welt's local mode reaches it, so follow [Welt's Quick Start](https://github.com/iwamot/welt#quick-start) with this file in place of the example agent. To deploy, follow the example's [Deploy](examples/agent#deploy) section with this file in place of the downloaded `main.py`, then point Welt's `AGENT_ARN` at the runtime.
 
 See [`examples/agent`](examples/agent) for the full version — the smallest complete agent built on this package (text streaming, tool use, file output, file input, and human-approval tools). The sections below cover the entrypoint and the adapters it wires in.
 
@@ -116,7 +118,7 @@ Reduces the `(mode, payload)` items of `astream(..., stream_mode=["messages", "u
 |---|---|---|
 | Token deltas | `data` | The streamed reply |
 | Tool calls and tool messages | `current_tool_use` / `tool_result` | "Using tool" indicators (tool output stays off the wire) |
-| Image / file / video content blocks the model returns, or a tool named in `files_from` returns | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
+| Image / file / video / audio content blocks the model returns, or a tool named in `files_from` returns | `file` | An uploaded file ([size limits](https://github.com/iwamot/welt/blob/main/docs/wire.md#limits)) |
 | Pending [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | `interrupt` | Buttons and/or a text field |
 
 A run that stops for human input ends its stream with one `interrupt` event per pending interrupt — or per reviewed action, for a [`HumanInTheLoopMiddleware`](#gating-tools-with-humanintheloopmiddleware) request; agents that do not use interrupts see no change.
@@ -172,7 +174,7 @@ Building the reason through this helper is what makes a typo an error. `interrup
 
 [Welt's Interrupts doc](https://github.com/iwamot/welt/blob/main/docs/interrupts.md) covers the Slack side: how each reason renders, who can answer, multiple questions, and expiry. On the LangGraph side:
 
-- **`interrupt` needs a checkpointer**, even though the conversation history lives in Slack — pausing and resuming run through checkpoints. An in-memory checkpointer works on AgentCore Runtime, where each session keeps its own microVM.
+- **`interrupt` needs a checkpointer**, even though the conversation history lives in Slack — pausing and resuming run through checkpoints. An in-memory checkpointer works on AgentCore Runtime, where each session keeps its own microVM, for as long as that microVM lives: a question left open past that can no longer be resumed ([Expiry](https://github.com/iwamot/welt/blob/main/docs/interrupts.md#behavior-details)).
 - **Start each conversation turn on a fresh thread.** Welt sends the whole Slack thread every turn by default, so letting the checkpointer stack turns into its own history would double the conversation. Resume alone reuses the interrupted thread's config. (An agent that keeps its own history instead sets `AGENT_MANAGES_HISTORY` on the Welt side.)
 - **A plain interrupt value renders too.** Any non-structured value — `interrupt("Deploy to prod?")` — becomes a question with Welt's default buttons, whose answers arrive as `True` / `False`.
 - **Code before `interrupt` runs again on resume.** LangGraph re-executes the interrupted node (or tool) from its start, so wrap whatever precedes an interrupt and must not run twice — side effects, or work that must match what the human approved — in a [LangGraph task](https://docs.langchain.com/oss/python/langgraph/functional-api#task): a completed task is not re-executed on resume; its saved result is reused. The [example agent](examples/agent)'s `sample_draft_report` shows the pattern.

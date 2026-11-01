@@ -49,7 +49,7 @@ uv add --project app/WeltExample bedrock-agentcore aws-opentelemetry-distro lang
 agentcore deploy
 ```
 
-The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for it in the Amazon Bedrock console, in the region you deployed to, or point the `MODEL_ID` environment variable at another Converse model — and `BEDROCK_REGION` at another region, to leave the model access where it already is. `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
+The agent defaults to `global.anthropic.claude-sonnet-4-6`, so enable access for it in the Amazon Bedrock console, in the region you deployed to, or point the `MODEL_ID` environment variable at another Converse model — and `BEDROCK_REGION` at another region, to leave the model access where it already is. Both go in an `--environment-variables` JSON object on `agentcore add runtime`. `agentcore status` reports the agent runtime ARN: Welt's `AGENT_ARN` points at it.
 
 ### Verify the Deployment
 
