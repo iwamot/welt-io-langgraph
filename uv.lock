@@ -1473,7 +1473,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "langchain-core" },
-    { name = "langgraph", specifier = ">=1.2.11" },
+    { name = "langgraph", specifier = ">=1.2.12" },
 ]
 
 [package.metadata.requires-dev]

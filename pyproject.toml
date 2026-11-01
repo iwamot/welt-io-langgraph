@@ -26,8 +26,9 @@ dependencies = [
     # the only place the supported floor can be stated. 1.2.11 is the oldest
     # version the test suite passes against: the human-approval test drives
     # LangChain's own middleware, and LangChain reads `TracePolicy` from
-    # `langgraph.types`, which arrived there in 1.2.11.
-    "langgraph>=1.2.11",
+    # `langgraph.types`, which arrived there in 1.2.11. An interrupt's
+    # `response_schema`, read for `interrupt_mode="per_call"`, arrived in 1.2.12.
+    "langgraph>=1.2.12",
     # Imported directly: the reply stream carries LangChain's own message
     # objects, which are read as those types rather than guessed at by
     # attribute name. No floor of its own — LangGraph decides which version
