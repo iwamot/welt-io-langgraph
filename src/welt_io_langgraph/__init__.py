@@ -670,9 +670,9 @@ def _message_events(payload: object, files_from: Collection[str] | None) -> list
     (AIMessageChunk) carry text — a `data` event — and the opening
     tool-call chunks — a `current_tool_use` event each. A complete
     assistant message (emitted for nodes that return one without
-    streaming) carries the same as text and tool calls, plus a `file`
-    event per file-carrying content block for models that generate files.
-    A tool message becomes a `tool_result` event slimmed to the tool call
+    streaming) carries the same as text and tool calls. Either carries a
+    `file` event per file-carrying content block for models that generate
+    files. A tool message becomes a `tool_result` event slimmed to the tool call
     id and status, followed by a `file` event per file-carrying content
     block the tool returned, when the tool is one the agent takes files
     from.
@@ -715,7 +715,8 @@ def _chunk_events(message: AIMessageChunk) -> list[dict]:
         list[dict]: A `data` event for the chunk's text and a
             `current_tool_use` event per opening tool-call chunk — the one
             carrying the call's id and name; the argument fragments that
-            follow carry neither and stay off the wire.
+            follow carry neither and stay off the wire — and a `file` event
+            per file-carrying content block, for models that generate files.
     """
     events = _data_events(message)
     events.extend(
@@ -723,6 +724,7 @@ def _chunk_events(message: AIMessageChunk) -> list[dict]:
         for chunk in message.tool_call_chunks
         if (event := _tool_use_event(chunk["name"], chunk["id"])) is not None
     )
+    events.extend(_file_events(message, "the model"))
     return events
 
 
