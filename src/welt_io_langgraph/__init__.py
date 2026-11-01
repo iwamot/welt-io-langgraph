@@ -200,6 +200,10 @@ def _decoded_block(block: dict) -> dict:
 # by hand.
 _HITL_ID_PREFIX = "welt-io:hitl:"
 
+# How a question for one `interrupt_mode="per_call"` approval is told from a
+# plain interrupt on the way back, for the same reason.
+_HITL_CALL_ID_PREFIX = "welt-io:hitl-call:"
+
 # The widget names Welt's resume payload uses.
 _OPTION_SOURCE = "option"
 
@@ -220,7 +224,9 @@ def decode_interrupt_responses(responses: dict) -> dict:
     action order. There the widget decides: a pressed button is one of the
     two decisions the question offered, and a submitted text field is the
     `respond` decision, carrying what was typed untouched — since what a
-    typed answer means is for the agent to decide.
+    typed answer means is for the agent to decide. In the middleware's
+    `per_call` mode each call has an interrupt of its own, which resumes
+    from one such decision under its own id.
 
     Args:
         responses (dict): The `interrupt_responses` value of Welt's
@@ -232,6 +238,10 @@ def decode_interrupt_responses(responses: dict) -> dict:
     decoded: dict = {}
     answers_by_request: dict[str, dict[int, dict]] = {}
     for interrupt_id, answer in responses.items():
+        if interrupt_id.startswith(_HITL_CALL_ID_PREFIX):
+            call_id = interrupt_id.removeprefix(_HITL_CALL_ID_PREFIX)
+            decoded[call_id] = _hitl_decision(answer)
+            continue
         split = _split_hitl_id(interrupt_id)
         if split is None:
             decoded[interrupt_id] = answer["value"]
@@ -903,7 +913,7 @@ def _interrupt_events(payload: object) -> list[dict]:
     A `HumanInTheLoopMiddleware` request is the one value read rather than
     passed through, since Welt cannot render it and the middleware cannot
     resume from a plain answer; it becomes one question per reviewed
-    action instead.
+    action instead, and an approval from its `per_call` mode one question.
 
     Args:
         payload (object): The `updates` payload of a stream item.
@@ -927,8 +937,80 @@ def _interrupt_events(payload: object) -> list[dict]:
         if hitl_events is not None:
             events.extend(hitl_events)
             continue
+        response_schema = getattr(interrupt, "response_schema", None)
+        call_event = _hitl_call_event(interrupt_id, value, response_schema)
+        if call_event is not None:
+            events.append(call_event)
+            continue
         events.append({"interrupt": {"id": interrupt_id, "name": "", "reason": value}})
     return events
+
+
+def _hitl_call_event(
+    interrupt_id: str, value: object, response_schema: object
+) -> dict | None:
+    """
+    Serialize a `per_call` `HumanInTheLoopMiddleware` approval as a question.
+
+    In this mode each gated call raises an interrupt of its own, whose value
+    is a `ToolApprovalRequest` and whose `response_schema` lists the
+    decisions the tool allows. A value that is not such a request returns
+    None, leaving the caller to pass it through, and so does a request
+    allowing `edit` alone, as `_hitl_events` explains.
+
+    Args:
+        interrupt_id (str): The id of the interrupt carrying the request.
+        value (object): The interrupt's value.
+        response_schema (object): The JSON schema of the interrupt's answer.
+
+    Returns:
+        dict | None: The `interrupt` event, or None when the value is not
+            a request this can translate.
+    """
+    if not isinstance(value, dict) or value.get("type") != "tool_approval":
+        return None
+    name = value.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    reason = _hitl_reason(value, name, _allowed_decisions(response_schema))
+    if reason is None:
+        return None
+    return {
+        "interrupt": {
+            "id": f"{_HITL_CALL_ID_PREFIX}{interrupt_id}",
+            "name": name,
+            "reason": reason,
+        }
+    }
+
+
+def _allowed_decisions(response_schema: object) -> list:
+    """
+    Read the decisions a `per_call` approval allows from its answer's schema.
+
+    Several decisions make a union discriminated on `type`, whose mapping
+    names them; a single one is a plain object whose `type` is a constant.
+
+    Args:
+        response_schema (object): The JSON schema of the interrupt's answer.
+
+    Returns:
+        list: The decision types, empty when the schema names none.
+    """
+    if not isinstance(response_schema, dict):
+        return []
+    discriminator = response_schema.get("discriminator")
+    if isinstance(discriminator, dict) and isinstance(
+        discriminator.get("mapping"), dict
+    ):
+        return list(discriminator["mapping"])
+    properties = response_schema.get("properties")
+    decision = properties.get("type") if isinstance(properties, dict) else None
+    return (
+        [decision["const"]]
+        if isinstance(decision, dict) and "const" in decision
+        else []
+    )
 
 
 def _hitl_events(interrupt_id: str, value: object) -> list[dict] | None:

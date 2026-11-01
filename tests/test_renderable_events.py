@@ -658,3 +658,54 @@ def test_hitl_action_allowing_edit_is_asked_with_the_rest_of_its_widgets() -> No
     assert reason["approve"] == {}
     assert "reject" not in reason
     assert "input" not in reason
+
+
+def tool_approval(name: object = "send_email") -> dict:
+    """Build the value of a `per_call` HumanInTheLoopMiddleware interrupt."""
+    return {
+        "type": "tool_approval",
+        "tool_call_id": "call-1",
+        "name": name,
+        "args": {},
+        "description": "Send it?",
+    }
+
+
+def test_per_call_approval_allowing_one_decision_offers_that_decision() -> None:
+    schema = {"properties": {"type": {"const": "approve"}}}
+    interrupt = Interrupt(value=tool_approval(), id="i-1", response_schema=schema)
+    items = [("updates", {"__interrupt__": (interrupt,)})]
+
+    assert rendered(items) == [
+        {
+            "interrupt": {
+                "id": "welt-io:hitl-call:i-1",
+                "name": "send_email",
+                "reason": {"message": "Send it?", "approve": {}},
+            }
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "schema"),
+    [
+        # Editing alone leaves no widget to ask with.
+        (tool_approval(), {"properties": {"type": {"const": "edit"}}}),
+        (tool_approval(), None),
+        (tool_approval(), {"properties": "not properties"}),
+        (tool_approval(), {"properties": {"type": {}}}),
+        (tool_approval(), {"discriminator": {}}),
+        (tool_approval(name=""), {"properties": {"type": {"const": "approve"}}}),
+        ({"type": "other"}, {"properties": {"type": {"const": "approve"}}}),
+    ],
+)
+def test_per_call_value_it_cannot_translate_is_passed_through(
+    value: dict, schema: dict | None
+) -> None:
+    interrupt = Interrupt(value=value, id="i-1", response_schema=schema)
+    items = [("updates", {"__interrupt__": (interrupt,)})]
+
+    assert rendered(items) == [
+        {"interrupt": {"id": "i-1", "name": "", "reason": value}}
+    ]

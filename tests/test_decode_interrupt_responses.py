@@ -133,3 +133,17 @@ def test_an_id_outside_the_adapters_namespace_answers_a_plain_interrupt() -> Non
         "welt-io:hitl:0:": "y",
         "welt-io:hitl:0": "y",
     }
+
+
+def test_a_per_call_answer_becomes_the_decision_under_its_own_id() -> None:
+    answers = {
+        "welt-io:hitl-call:i-1": _pressed(True),
+        "welt-io:hitl-call:i-2": _pressed(False),
+        "welt-io:hitl-call:i-3": _typed("not now"),
+    }
+
+    assert decode_interrupt_responses(answers) == {
+        "i-1": {"type": "approve"},
+        "i-2": {"type": "reject"},
+        "i-3": {"type": "respond", "message": "not now"},
+    }
