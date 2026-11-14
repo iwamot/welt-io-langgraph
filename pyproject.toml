@@ -55,7 +55,7 @@ dev = [
     # bump, which would leave CI on whatever version those two happen to
     # pull in.
     "langchain-core==1.8.0",
-    "langgraph==1.2.20",
+    "langgraph==1.2.21",
     # compatibility.sh reads the declared floors with it. Pinned even though it
     # arrives through pytest, so CI names the version it uses.
     "packaging==26.3",
