@@ -2,6 +2,8 @@ import asyncio
 import base64
 import logging
 from collections.abc import AsyncIterator
+from copy import deepcopy
+from itertools import product
 from types import SimpleNamespace
 
 import pytest
@@ -26,69 +28,110 @@ def rendered(items: list, files_from: set[str] | None = None) -> list[dict]:
     return asyncio.run(gather())
 
 
-def test_token_delta_becomes_a_data_event() -> None:
-    items = [("messages", (AIMessageChunk(content="hel"), {"langgraph_node": "model"}))]
-
-    assert rendered(items) == [{"data": "hel"}]
-
-
-def test_empty_token_delta_yields_nothing() -> None:
-    assert rendered([("messages", (AIMessageChunk(content=""), {}))]) == []
-
-
-def test_opening_tool_call_chunk_becomes_a_current_tool_use_event() -> None:
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[
-            {
-                "name": "current_time",
-                "args": "",
-                "id": "call-1",
-                "index": 0,
-                "type": "tool_call_chunk",
-            }
-        ],
+def test_stream_projection_preserves_order_multiplicity_and_public_fields() -> None:
+    call = {"name": "current_time", "args": {}, "id": "call-1", "type": "tool_call"}
+    chunk = {
+        "name": "current_time",
+        "args": "",
+        "id": "call-1",
+        "index": 0,
+        "type": "tool_call_chunk",
+    }
+    cases = (
+        (
+            ("messages", (AIMessageChunk(content="hel"), {"langgraph_node": "model"})),
+            [{"data": "hel"}],
+        ),
+        (("messages", (AIMessage(content="日本語\n "), {})), [{"data": "日本語\n "}]),
+        (("messages", (AIMessageChunk(content=""), {})), []),
+        (
+            ("messages", (AIMessageChunk(content="", tool_call_chunks=[chunk]), {})),
+            [{"current_tool_use": {"name": "current_time", "toolUseId": "call-1"}}],
+        ),
+        (
+            ("messages", (AIMessage(content="", tool_calls=[call]), {})),
+            [{"current_tool_use": {"name": "current_time", "toolUseId": "call-1"}}],
+        ),
+        (
+            (
+                "messages",
+                (
+                    AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            {
+                                "name": None,
+                                "args": '{"x": 1',
+                                "id": None,
+                                "index": 0,
+                                "type": "tool_call_chunk",
+                            }
+                        ],
+                    ),
+                    {},
+                ),
+            ),
+            [],
+        ),
+        (
+            (
+                "messages",
+                (ToolMessage("arbitrarily large output", tool_call_id="call-1"), {}),
+            ),
+            [{"tool_result": {"toolUseId": "call-1", "status": "success"}}],
+        ),
+        (
+            (
+                "messages",
+                (ToolMessage("boom", tool_call_id="call-2", status="error"), {}),
+            ),
+            [{"tool_result": {"toolUseId": "call-2", "status": "error"}}],
+        ),
+        (
+            ("updates", {"__interrupt__": (Interrupt(value="Sure?", id="i-1"),)}),
+            [{"interrupt": {"id": "i-1", "name": "", "reason": "Sure?"}}],
+        ),
     )
+    for size in range(4):
+        for selected in product(cases, repeat=size):
+            items = [deepcopy(item) for item, _ in selected]
+            before = deepcopy(items)
+            assert rendered(items) == [
+                event for _, output in selected for event in output
+            ], items
+            assert items == before
 
-    assert rendered([("messages", (chunk, {}))]) == [
-        {"current_tool_use": {"name": "current_time", "toolUseId": "call-1"}}
-    ]
 
-
-def test_argument_fragment_chunks_stay_off_the_wire() -> None:
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[
-            {
-                "name": None,
-                "args": '{"x": 1',
-                "id": None,
-                "index": 0,
-                "type": "tool_call_chunk",
-            }
-        ],
+def test_plain_interrupts_preserve_ids_and_uninterpreted_reasons() -> None:
+    reasons = (
+        None,
+        "Deploy?",
+        {
+            "message": "Deploy to prod?",
+            "options": [{"value": "approve", "label": "Deploy", "style": "primary"}],
+            "extra": {"nested": [1, {"deep": True}]},
+        },
     )
-
-    assert rendered([("messages", (chunk, {}))]) == []
-
-
-def test_complete_assistant_message_text_becomes_a_data_event() -> None:
-    items = [("messages", (AIMessage("hello"), {}))]
-
-    assert rendered(items) == [{"data": "hello"}]
-
-
-def test_complete_assistant_message_tool_calls_become_current_tool_use() -> None:
-    message = AIMessage(
-        content="",
-        tool_calls=[
-            {"name": "current_time", "args": {}, "id": "call-1", "type": "tool_call"}
-        ],
-    )
-
-    assert rendered([("messages", (message, {}))]) == [
-        {"current_tool_use": {"name": "current_time", "toolUseId": "call-1"}}
-    ]
+    for size in range(4):
+        for selected in product(reasons, repeat=size):
+            items = [
+                (
+                    "updates",
+                    {
+                        "__interrupt__": tuple(
+                            Interrupt(value=reason, id=f"i-{i}")
+                            for i, reason in enumerate(selected)
+                        )
+                    },
+                )
+            ]
+            actual = rendered(items)
+            assert actual == [
+                {"interrupt": {"id": f"i-{i}", "name": "", "reason": reason}}
+                for i, reason in enumerate(selected)
+            ]
+            for event, reason in zip(actual, selected, strict=True):
+                assert event["interrupt"]["reason"] is reason
 
 
 def test_tool_call_without_id_stays_off_the_wire() -> None:
@@ -111,22 +154,6 @@ def test_assistant_message_image_block_becomes_a_file_event() -> None:
     assert rendered([("messages", (message, {}))]) == [
         {"data": "here you go"},
         {"file": {"name": "image.png", "bytes": PNG_BASE64}},
-    ]
-
-
-def test_tool_message_is_slimmed_to_id_and_status() -> None:
-    message = ToolMessage("arbitrarily large output", tool_call_id="call-1")
-
-    assert rendered([("messages", (message, {}))]) == [
-        {"tool_result": {"toolUseId": "call-1", "status": "success"}}
-    ]
-
-
-def test_tool_error_becomes_an_error_status() -> None:
-    message = ToolMessage("boom", tool_call_id="call-1", status="error")
-
-    assert rendered([("messages", (message, {}))]) == [
-        {"tool_result": {"toolUseId": "call-1", "status": "error"}}
     ]
 
 
@@ -353,47 +380,6 @@ def test_non_dict_tool_calls_and_content_blocks_are_skipped() -> None:
     assert rendered([("messages", (message, {}))]) == []
 
 
-def test_pending_interrupt_becomes_an_interrupt_event() -> None:
-    interrupt = Interrupt(value="Deploy?", id="i-1")
-    items = [("updates", {"__interrupt__": (interrupt,)})]
-
-    assert rendered(items) == [
-        {"interrupt": {"id": "i-1", "name": "", "reason": "Deploy?"}}
-    ]
-
-
-def test_yields_one_interrupt_event_per_interrupt() -> None:
-    items = [
-        (
-            "updates",
-            {
-                "__interrupt__": (
-                    Interrupt(value="A?", id="i-1"),
-                    Interrupt(value="B?", id="i-2"),
-                )
-            },
-        )
-    ]
-
-    assert rendered(items) == [
-        {"interrupt": {"id": "i-1", "name": "", "reason": "A?"}},
-        {"interrupt": {"id": "i-2", "name": "", "reason": "B?"}},
-    ]
-
-
-def test_interrupt_reason_is_passed_through_unmodified() -> None:
-    reason = {
-        "message": "Deploy to prod?",
-        "options": [{"value": "approve", "label": "Deploy", "style": "primary"}],
-        "extra": {"nested": [1, {"deep": True}]},
-    }
-    items = [("updates", {"__interrupt__": (Interrupt(value=reason, id="i-1"),)})]
-
-    rendered_reason = rendered(items)[0]["interrupt"]["reason"]
-
-    assert rendered_reason is reason
-
-
 def test_interrupt_without_an_id_is_skipped() -> None:
     items = [("updates", {"__interrupt__": (SimpleNamespace(value="Deploy?"),)})]
 
@@ -421,36 +407,6 @@ def test_unrenderable_items_are_dropped() -> None:
     ]
 
     assert rendered(items) == []
-
-
-def test_stream_order_is_preserved() -> None:
-    chunk = AIMessageChunk(
-        content="",
-        tool_call_chunks=[
-            {
-                "name": "current_time",
-                "args": "",
-                "id": "call-1",
-                "index": 0,
-                "type": "tool_call_chunk",
-            }
-        ],
-    )
-    items = [
-        ("messages", (AIMessageChunk(content="a"), {})),
-        ("messages", (chunk, {})),
-        ("messages", (ToolMessage("12:00", tool_call_id="call-1"), {})),
-        ("messages", (AIMessageChunk(content="b"), {})),
-        ("updates", {"__interrupt__": (Interrupt(value="Sure?", id="i-1"),)}),
-    ]
-
-    assert rendered(items) == [
-        {"data": "a"},
-        {"current_tool_use": {"name": "current_time", "toolUseId": "call-1"}},
-        {"tool_result": {"toolUseId": "call-1", "status": "success"}},
-        {"data": "b"},
-        {"interrupt": {"id": "i-1", "name": "", "reason": "Sure?"}},
-    ]
 
 
 def hitl_request(*actions: dict, configs: list | None = None) -> dict:
