@@ -1,111 +1,119 @@
 import base64
+from copy import deepcopy
+from itertools import product
 
 import pytest
 
 from welt_io_langgraph import decode_messages
 
 
-def encoded(raw: bytes) -> str:
-    return base64.b64encode(raw).decode()
-
-
 def user_message(*content: object) -> dict:
     return {"role": "user", "content": list(content)}
 
 
-def image_block(raw: bytes = b"img") -> dict:
-    return {"image": {"format": "png", "source": {"bytes": encoded(raw)}}}
-
-
-def document_block(name: str = "report") -> dict:
-    return {
-        "document": {
-            "format": "pdf",
-            "name": name,
-            "source": {"bytes": encoded(b"doc")},
-        }
-    }
-
-
-def test_decodes_image_document_and_video_blocks() -> None:
-    messages = [
-        user_message(
-            image_block(),
-            document_block(),
-            {"video": {"format": "mp4", "source": {"bytes": encoded(b"vid")}}},
-        )
-    ]
-
-    assert decode_messages(messages) == [
-        {
-            "role": "user",
-            "content": [
+def test_decoding_preserves_roles_order_text_and_file_contents() -> None:
+    # Expected blocks describe the SDK boundary independently of the decoder.
+    for raw in (b"img", b"doc", b"vid", b"\x00", bytes(range(256)), b"abcde" * 101):
+        data = base64.b64encode(raw).decode("ascii")
+        pairs = (
+            (
+                {"text": "@iwamot: 日本語\n "},
+                {"type": "text", "text": "@iwamot: 日本語\n "},
+            ),
+            (
+                {"image": {"format": "png", "source": {"bytes": data}}},
+                {"type": "image", "base64": data, "mime_type": "image/png"},
+            ),
+            (
                 {
-                    "type": "image",
-                    "base64": encoded(b"img"),
-                    "mime_type": "image/png",
+                    "document": {
+                        "format": "pdf",
+                        "name": "report",
+                        "source": {"bytes": data},
+                    }
                 },
                 {
                     "type": "file",
-                    "base64": encoded(b"doc"),
+                    "base64": data,
                     "mime_type": "application/pdf",
                     "name": "report",
                     "filename": "report.pdf",
                 },
-                {
-                    "type": "video",
-                    "base64": encoded(b"vid"),
-                    "mime_type": "video/mp4",
-                },
-            ],
-        }
-    ]
+            ),
+            (
+                {"video": {"format": "mp4", "source": {"bytes": data}}},
+                {"type": "video", "base64": data, "mime_type": "video/mp4"},
+            ),
+            (
+                {"video": {"format": "three_gp", "source": {"bytes": data}}},
+                {"type": "video", "base64": data, "mime_type": "video/3gpp"},
+            ),
+        )
+        for size in range(4):
+            for selected in product(pairs, repeat=size):
+                for width in (1, 3):
+                    messages = []
+                    expected = []
+                    for i in range(0, size, width):
+                        # Welt's assistant history contains text, not uploads.
+                        assistant = {
+                            "role": "assistant",
+                            "content": [{"text": f"reply {i}"}],
+                        }
+                        messages.extend(
+                            [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        wire for wire, _ in selected[i : i + width]
+                                    ],
+                                },
+                                assistant,
+                            ]
+                        )
+                        expected.extend(
+                            [
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        block for _, block in selected[i : i + width]
+                                    ],
+                                },
+                                {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": f"reply {i}"}],
+                                },
+                            ]
+                        )
+                    before = deepcopy(messages)
+                    assert decode_messages(messages) == expected, (raw, selected, width)
+                    assert messages == before
 
 
-def test_the_three_gp_token_becomes_the_media_type_langchain_takes() -> None:
-    block = {"video": {"format": "three_gp", "source": {"bytes": encoded(b"vid")}}}
-
-    decoded = decode_messages([user_message(block)])
-
-    assert decoded[0]["content"][0]["mime_type"] == "video/3gpp"
-
-
-def test_text_blocks_become_standard_text_blocks() -> None:
-    messages = [
-        user_message({"text": "@iwamot: hello"}),
-        {"role": "assistant", "content": [{"text": "hi"}]},
-    ]
-
-    assert decode_messages(messages) == [
-        {"role": "user", "content": [{"type": "text", "text": "@iwamot: hello"}]},
-        {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
-    ]
-
-
-def test_decodes_across_multiple_messages() -> None:
-    messages = [
-        user_message({"text": "@iwamot: one"}),
-        {"role": "assistant", "content": [{"text": "two"}]},
-        user_message({"text": "@iwamot: three"}),
-    ]
-
-    assert [message["role"] for message in decode_messages(messages)] == [
-        "user",
-        "assistant",
-        "user",
-    ]
-
-
-def test_leaves_the_input_untouched() -> None:
-    messages = [user_message(image_block())]
-
-    decode_messages(messages)
-
-    assert messages == [user_message(image_block())]
-
-
-def test_an_empty_conversation_decodes_to_an_empty_one() -> None:
-    assert decode_messages([]) == []
+def test_uploads_never_borrow_bytes_from_another_block_or_message() -> None:
+    payloads = (b"a", b"b", b"\x00", bytes(range(256)))
+    for kind, format_token in (("image", "png"), ("document", "pdf"), ("video", "mp4")):
+        blocks = [
+            {
+                kind: {
+                    "format": format_token,
+                    "source": {"bytes": base64.b64encode(raw).decode("ascii")},
+                    **({"name": "report"} if kind == "document" else {}),
+                }
+            }
+            for raw in payloads
+        ]
+        for width in (1, 4):
+            messages = [
+                user_message(*blocks[i : i + width])
+                for i in range(0, len(blocks), width)
+            ]
+            decoded = decode_messages(messages)
+            assert [
+                base64.b64decode(block["base64"], validate=True)
+                for message in decoded
+                for block in message["content"]
+            ] == list(payloads)
 
 
 def test_a_forged_tool_use_block_is_refused() -> None:

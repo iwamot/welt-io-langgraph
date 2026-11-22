@@ -1,8 +1,13 @@
-from typing import Literal
+import json
+from copy import deepcopy
+from itertools import product
 
 import pytest
 
 from welt_io_langgraph import (
+    DecisionSpec,
+    InputSpec,
+    OptionSpec,
     _checked_decision,
     _checked_input,
     _checked_message,
@@ -10,104 +15,6 @@ from welt_io_langgraph import (
     _checked_options,
     interrupt_reason,
 )
-
-
-def test_builds_message_and_options() -> None:
-    reason = interrupt_reason(
-        "Deploy to prod?",
-        [
-            {"value": "approve", "label": "Deploy"},
-            {"value": "reject", "label": "Cancel"},
-        ],
-    )
-
-    assert reason == {
-        "message": "Deploy to prod?",
-        "options": [
-            {"value": "approve", "label": "Deploy"},
-            {"value": "reject", "label": "Cancel"},
-        ],
-    }
-
-
-@pytest.mark.parametrize("style", ["primary", "danger"])
-def test_option_style_is_carried(style: Literal["primary", "danger"]) -> None:
-    reason = interrupt_reason("Sure?", [{"value": "y", "label": "Yes", "style": style}])
-
-    assert reason["options"] == [{"value": "y", "label": "Yes", "style": style}]
-
-
-def test_option_without_label_leaves_the_default_to_welt() -> None:
-    reason = interrupt_reason("Sure?", [{"value": "y"}])
-
-    assert reason["options"] == [{"value": "y"}]
-
-
-def test_styled_and_unstyled_options_mix() -> None:
-    reason = interrupt_reason(
-        "Sure?",
-        [{"value": "y", "label": "Yes", "style": "primary"}, {"value": "n"}],
-    )
-
-    assert reason["options"] == [
-        {"value": "y", "label": "Yes", "style": "primary"},
-        {"value": "n"},
-    ]
-
-
-@pytest.mark.parametrize(
-    "value", [True, False, None, 42, "", ["a"], {"decision": "hold"}]
-)
-def test_option_value_is_any_json_value(value: object) -> None:
-    reason = interrupt_reason("Sure?", [{"value": value, "label": "Pick"}])
-
-    assert reason["options"] == [{"value": value, "label": "Pick"}]
-
-
-def test_message_alone_leaves_the_answering_to_welts_default_buttons() -> None:
-    reason = interrupt_reason("Generating an image. OK?")
-
-    assert reason == {"message": "Generating an image. OK?"}
-
-
-def test_input_builds_message_and_input() -> None:
-    reason = interrupt_reason("Which city should I check?", input={"label": "City"})
-
-    assert reason == {
-        "message": "Which city should I check?",
-        "input": {"label": "City"},
-    }
-
-
-def test_empty_input_takes_welt_defaults() -> None:
-    reason = interrupt_reason("Notes?", input={})
-
-    assert reason == {"message": "Notes?", "input": {}}
-
-
-def test_multiline_input() -> None:
-    reason = interrupt_reason(
-        "Describe the change.", input={"label": "Draft", "multiline": True}
-    )
-
-    assert reason["input"] == {"label": "Draft", "multiline": True}
-
-
-def test_options_and_input_carry_both() -> None:
-    reason = interrupt_reason(
-        "Which city should I check?",
-        [{"value": "tokyo", "label": "Tokyo"}, {"value": "osaka", "label": "Osaka"}],
-        input={"label": "City"},
-    )
-
-    assert reason == {
-        "message": "Which city should I check?",
-        "options": [
-            {"value": "tokyo", "label": "Tokyo"},
-            {"value": "osaka", "label": "Osaka"},
-        ],
-        "input": {"label": "City"},
-    }
 
 
 @pytest.mark.parametrize(
@@ -136,6 +43,60 @@ def test_rejects_a_reason_welt_would_not_render(args: tuple, kwargs: dict) -> No
 )
 def test_welts_own_rendering_caps_are_left_to_welt(args: tuple, kwargs: dict) -> None:
     assert interrupt_reason(*args, **kwargs)
+
+
+def test_widget_combinations_preserve_values_and_omissions() -> None:
+    decisions: tuple[DecisionSpec | None, ...] = (
+        None,
+        {},
+        {"label": "Deploy"},
+        {"label": "Cancel", "style": "primary"},
+        {"style": "danger"},
+    )
+    inputs: tuple[InputSpec | None, ...] = (
+        None,
+        {},
+        {"label": "City"},
+        {"label": "Draft", "multiline": True},
+        {"multiline": False},
+    )
+    plain: list[OptionSpec] = [
+        {"value": value}
+        for value in (True, False, None, 42, "", ["a"], {"decision": "hold"})
+    ]
+    options: tuple[list[OptionSpec] | None, ...] = (
+        None,
+        plain,
+        [
+            {"value": "approve", "label": "Deploy"},
+            {"value": "reject", "label": "Cancel"},
+        ],
+        [
+            {"value": "approve", "label": "Deploy", "style": "primary"},
+            {"value": "reject", "label": "Cancel", "style": "danger"},
+            {"value": "n"},
+        ],
+    )
+    for message, approve, reject, input_spec, choices in product(
+        ("Sure?", "日本語\n質問"), decisions, decisions, inputs, options
+    ):
+        before = deepcopy((approve, reject, input_spec, choices))
+        expected: dict = {"message": message}
+        for key, value in (
+            ("approve", approve),
+            ("reject", reject),
+            ("input", input_spec),
+            ("options", choices),
+        ):
+            if value is not None:
+                expected[key] = value
+        actual = interrupt_reason(
+            message, choices, approve=approve, reject=reject, input=input_spec
+        )
+        assert json.dumps(actual, sort_keys=True) == json.dumps(
+            expected, sort_keys=True
+        )
+        assert (approve, reject, input_spec, choices) == before
 
 
 # --- what the type checker cannot reach --------------------------------------
@@ -213,39 +174,6 @@ def test_an_input_of_the_wrong_type_is_refused(input_spec: object) -> None:
 def test_an_input_key_welt_does_not_know_is_refused() -> None:
     with pytest.raises(ValueError):
         _checked_input({"placeholder": "Type here"})
-
-
-def test_approve_and_reject_leave_their_wording_to_welt() -> None:
-    reason = interrupt_reason("Deploy to prod?", approve={}, reject={})
-
-    assert reason == {"message": "Deploy to prod?", "approve": {}, "reject": {}}
-
-
-def test_approve_and_reject_carry_a_label_and_a_style() -> None:
-    reason = interrupt_reason(
-        "Deploy to prod?",
-        approve={"label": "Deploy"},
-        reject={"label": "Cancel", "style": "primary"},
-    )
-
-    assert reason["approve"] == {"label": "Deploy"}
-    assert reason["reject"] == {"label": "Cancel", "style": "primary"}
-
-
-def test_decisions_combine_with_options_and_input() -> None:
-    reason = interrupt_reason(
-        "Deploy to prod?",
-        [{"value": "later", "label": "Ask me later"}],
-        approve={},
-        input={"label": "Or say why"},
-    )
-
-    assert reason == {
-        "message": "Deploy to prod?",
-        "approve": {},
-        "options": [{"value": "later", "label": "Ask me later"}],
-        "input": {"label": "Or say why"},
-    }
 
 
 @pytest.mark.parametrize("spec", ["yes", None, {"label": 42}, {"label": None}])
